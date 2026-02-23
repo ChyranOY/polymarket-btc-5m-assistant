@@ -310,7 +310,10 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const rt = statusData.runtime;
-      const mode = statusData.mode || 'PAPER';
+      // Use the DROPDOWN's value as the authoritative mode — never the
+      // server response — so that all components stay consistent with
+      // the first-poll-only sync and user-driven mode switches.
+      const mode = (modeSelect?.value || 'paper').toUpperCase();
       if (!statusData?.status?.ok) {
         statusMessage.textContent = 'Not OK';
       } else if (!rt) {
@@ -338,7 +341,7 @@ document.addEventListener('DOMContentLoaded', () => {
           : 'N/A';
 
         const rows = [
-          ['Mode', `<strong>${mode}</strong> ${statusData.tradingEnabled ? '<span style="color:var(--good)">ACTIVE</span>' : '<span style="color:var(--bad)">STOPPED</span>'}`],
+          ['Mode', `<strong>${mode}</strong> ${tradingStatusEl?.textContent === 'ACTIVE' ? '<span style="color:var(--good)">ACTIVE</span>' : '<span style="color:var(--bad)">STOPPED</span>'}`],
           ['Polymarket URL', pmUrl ? `<a href="${pmUrl}" target="_blank" rel="noreferrer">${pmUrl}</a>` : 'N/A'],
           ['Market', rt.marketSlug || 'N/A'],
           ['Time left', timeLeft],
@@ -488,7 +491,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---- trades ----
     try {
-      const modeNow = (lastStatusCache?.mode || 'PAPER');
+      // Use dropdown as single source of truth (matches first-poll-only sync)
+      const modeNow = (modeSelect?.value || 'paper').toUpperCase();
       const tradesUrl = modeNow === 'LIVE' ? '/api/live/trades' : '/api/trades';
       const tradesResponse = await fetch(tradesUrl);
       const tradesJson = await tradesResponse.json();
