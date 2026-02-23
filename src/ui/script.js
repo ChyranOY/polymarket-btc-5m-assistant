@@ -41,6 +41,16 @@ document.addEventListener('DOMContentLoaded', () => {
   let _lockedInstanceId = null;
   let _foreignInstanceCount = 0;
   const _INSTANCE_SWITCH_THRESHOLD = 5;
+  let _seekingInstance = false;
+
+  // After a user action POST (Start/Stop/Mode), reset the instance lock
+  // and enter seeking mode — poll without locking until we find an instance
+  // whose tradingEnabled matches our local UI state, then lock to it.
+  function _resetInstanceLock() {
+    _lockedInstanceId = null;
+    _foreignInstanceCount = 0;
+    _seekingInstance = true;
+  }
 
   // Mode and tradingEnabled are ONLY synced from the server on the very
   // first poll after page load.  After that, these values are exclusively
@@ -51,7 +61,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const res = await fetch('/api/trading/start', { method: 'POST' });
       const json = await res.json();
-      if (json.success) updateTradingStatus(true);
+      if (json.success) { updateTradingStatus(true); _resetInstanceLock(); }
     } catch (e) { console.error('Start trading failed:', e); }
   });
 
@@ -59,7 +69,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const res = await fetch('/api/trading/stop', { method: 'POST' });
       const json = await res.json();
-      if (json.success) updateTradingStatus(false);
+      if (json.success) { updateTradingStatus(false); _resetInstanceLock(); }
     } catch (e) { console.error('Stop trading failed:', e); }
   });
 
@@ -74,6 +84,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const json = await res.json();
       if (json.success) {
         updateTradingStatus(json.data.tradingEnabled);
+        _resetInstanceLock();
       } else {
         // Revert dropdown on failure
         const statusRes = await fetch('/api/trading/status');
@@ -303,25 +314,36 @@ document.addEventListener('DOMContentLoaded', () => {
       // ── Instance locking ────────────────────────────────────
       // Drop responses from a different server instance to prevent
       // ALL oscillation (not just mode — also entryDebug, balances, etc.)
+      // After a user action POST, we enter "seeking mode" — poll without
+      // locking until we find an instance whose tradingEnabled matches
+      // our local UI state, then lock to that instance.
       const respInstanceId = statusData?.status?._instanceId;
-      if (_lockedInstanceId === null) {
+      if (_seekingInstance) {
+        const localEnabled = tradingStatusEl?.textContent === 'ACTIVE';
+        const serverEnabled = statusData.tradingEnabled ?? false;
+        if (localEnabled === serverEnabled) {
+          // Found the instance that received our command — lock to it
+          _lockedInstanceId = respInstanceId;
+          _foreignInstanceCount = 0;
+          _seekingInstance = false;
+        } else {
+          // Wrong instance — skip, try next poll
+          return;
+        }
+      } else if (_lockedInstanceId === null) {
         // First poll — lock to this instance
         _lockedInstanceId = respInstanceId;
         _foreignInstanceCount = 0;
       } else if (respInstanceId && respInstanceId !== _lockedInstanceId) {
         _foreignInstanceCount++;
         if (_foreignInstanceCount >= _INSTANCE_SWITCH_THRESHOLD) {
-          // Original instance is gone — switch to the new one
           console.warn(`[UI] Switching to new server instance ${respInstanceId} (old: ${_lockedInstanceId})`);
           _lockedInstanceId = respInstanceId;
           _foreignInstanceCount = 0;
         } else {
-          // Different instance — skip this entire poll
-          console.debug(`[UI] Dropping response from instance ${respInstanceId} (locked to ${_lockedInstanceId}, foreign count: ${_foreignInstanceCount})`);
           return;
         }
       } else {
-        // Same instance — reset foreign counter
         _foreignInstanceCount = 0;
       }
 
@@ -365,23 +387,13 @@ document.addEventListener('DOMContentLoaded', () => {
           : 'N/A';
 
         const entryDbg = statusData.entryDebug || null;
-        const locallyActive = tradingStatusEl?.textContent === 'ACTIVE';
-        let entryReason;
-        if (!entryDbg) {
-          entryReason = locallyActive ? 'Enabled — waiting for server sync…' : 'N/A';
-        } else if (entryDbg.eligible) {
-          entryReason = 'ELIGIBLE (will enter if Rec=ENTER + thresholds hit)';
-        } else {
-          let blockers = Array.isArray(entryDbg.blockers) ? [...entryDbg.blockers] : [];
-          // If the user enabled trading locally but the polled instance
-          // hasn't received the command, filter out the stale blocker.
-          if (locallyActive) {
-            blockers = blockers.filter(b => b !== 'Trading disabled');
-          }
-          entryReason = blockers.length
-            ? blockers.join('; ')
-            : (locallyActive ? 'Enabled — waiting for server sync…' : 'Not eligible');
-        }
+        const entryReason = entryDbg
+          ? (entryDbg.eligible
+            ? 'ELIGIBLE (will enter if Rec=ENTER + thresholds hit)'
+            : (Array.isArray(entryDbg.blockers) && entryDbg.blockers.length
+              ? entryDbg.blockers.join('; ')
+              : 'Not eligible'))
+          : 'N/A';
 
         const rows = [
           ['Mode', `<strong>${mode}</strong> ${tradingStatusEl?.textContent === 'ACTIVE' ? '<span style="color:var(--good)">ACTIVE</span>' : '<span style="color:var(--bad)">STOPPED</span>'}`],

@@ -4,6 +4,12 @@
 
 ### 2026-02-23
 
+#### Fix: Instance Locking with Seeking Mode — Prevent Multi-Instance Oscillation
+- **Root cause:** On production (DigitalOcean), multiple server instances run behind a load balancer. POSTs (e.g., `/api/trading/start`) go to one instance, but status polls may lock to another, causing inconsistent responses and stale data (e.g., "Trading disabled" stuck forever).
+- **Fix:** Frontend locks to the first server `_instanceId` it sees. After any user action POST (Start/Stop/Mode), it enters **seeking mode** — unlocks and polls until it finds an instance whose `tradingEnabled` matches the local UI state, then re-locks to that instance. If the original instance dies, after 5 consecutive foreign responses (~7.5s), the frontend switches automatically.
+- **Benefit:** Eliminates all oscillation AND ensures the locked instance always reflects the user's most recent action. No more "waiting for server sync…" stuck state.
+- **Implementation:** `_resetInstanceLock()` called after Start/Stop/Mode POSTs. Seeking mode checks `tradingEnabled` match before locking. Entry blocker display uses simple server data (no client-side filtering needed).
+
 #### Fix: Definitive Oscillation Fix — First-Poll-Only Sync
 - **Root cause:** The polling loop overwrote mode and tradingEnabled from the server every 1.5s. If the server returned inconsistent values (multiple instances, restarts, fallback values), the UI oscillated. Previous guard-based and stabilization-based approaches were insufficient.
 - **Fix:** Mode and tradingEnabled are now synced from the server **only once on page load** (first poll). After that, these values are exclusively controlled by user actions (Start/Stop buttons, mode dropdown). The polling loop never touches them again. This eliminates oscillation regardless of server-side inconsistencies.
