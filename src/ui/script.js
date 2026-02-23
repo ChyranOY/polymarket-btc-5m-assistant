@@ -42,6 +42,8 @@ document.addEventListener('DOMContentLoaded', () => {
   let _foreignInstanceCount = 0;
   const _INSTANCE_SWITCH_THRESHOLD = 5;
   let _seekingInstance = false;
+  let _seekingPollCount = 0;
+  const _SEEKING_TIMEOUT_POLLS = 20; // ~30s at 1.5s interval
 
   // After a user action POST (Start/Stop/Mode), reset the instance lock
   // and enter seeking mode — poll without locking until we find an instance
@@ -50,6 +52,7 @@ document.addEventListener('DOMContentLoaded', () => {
     _lockedInstanceId = null;
     _foreignInstanceCount = 0;
     _seekingInstance = true;
+    _seekingPollCount = 0;
   }
 
   // Mode and tradingEnabled are ONLY synced from the server on the very
@@ -319,12 +322,20 @@ document.addEventListener('DOMContentLoaded', () => {
       // our local UI state, then lock to that instance.
       const respInstanceId = statusData?.status?._instanceId;
       if (_seekingInstance) {
+        _seekingPollCount++;
         const localEnabled = tradingStatusEl?.textContent === 'ACTIVE';
         const serverEnabled = statusData.tradingEnabled ?? false;
         const localMode = (modeSelect?.value || 'paper').toUpperCase();
         const serverMode = (statusData.mode || 'PAPER').toUpperCase();
         if (localEnabled === serverEnabled && localMode === serverMode) {
           // Found the instance that matches our local state — lock to it
+          _lockedInstanceId = respInstanceId;
+          _foreignInstanceCount = 0;
+          _seekingInstance = false;
+        } else if (_seekingPollCount >= _SEEKING_TIMEOUT_POLLS) {
+          // Timeout — accept this instance to avoid UI freeze.
+          // Dropdown remains source of truth for all rendering.
+          console.warn(`[UI] Seeking mode timed out after ${_seekingPollCount} polls, accepting instance ${respInstanceId}`);
           _lockedInstanceId = respInstanceId;
           _foreignInstanceCount = 0;
           _seekingInstance = false;
