@@ -31,13 +31,20 @@ document.addEventListener('DOMContentLoaded', () => {
     if (stopBtn) stopBtn.disabled = !enabled;
   }
 
-  // ── First-poll-only sync ────────────────────────────────────
+  // ── Instance locking ───────────────────────────────────────
+  // On the first successful poll we record the server's _instanceId.
+  // Subsequent responses from a DIFFERENT instance are silently dropped
+  // so that multiple server processes / crash-restarts can never cause
+  // oscillation in ANY field (mode, tradingEnabled, entryDebug, etc.).
+  // If we see 5 consecutive responses from a new instance, we switch
+  // to it (the original has likely died).
+  let _lockedInstanceId = null;
+  let _foreignInstanceCount = 0;
+  const _INSTANCE_SWITCH_THRESHOLD = 5;
+
   // Mode and tradingEnabled are ONLY synced from the server on the very
   // first poll after page load.  After that, these values are exclusively
-  // controlled by user actions (buttons / dropdown).  This eliminates
-  // oscillation caused by multiple server instances, restarts, or any
-  // other source of inconsistent responses — the polling loop never
-  // overwrites these two fields after the initial sync.
+  // controlled by user actions (buttons / dropdown).
   let _initialSyncDone = false;
 
   startBtn?.addEventListener('click', async () => {
@@ -292,6 +299,32 @@ document.addEventListener('DOMContentLoaded', () => {
       const statusJson = await statusResponse.json();
       if (!statusResponse.ok || !statusJson.success) throw new Error(statusJson.error || 'status endpoint failed');
       const statusData = statusJson.data;
+
+      // ── Instance locking ────────────────────────────────────
+      // Drop responses from a different server instance to prevent
+      // ALL oscillation (not just mode — also entryDebug, balances, etc.)
+      const respInstanceId = statusData?.status?._instanceId;
+      if (_lockedInstanceId === null) {
+        // First poll — lock to this instance
+        _lockedInstanceId = respInstanceId;
+        _foreignInstanceCount = 0;
+      } else if (respInstanceId && respInstanceId !== _lockedInstanceId) {
+        _foreignInstanceCount++;
+        if (_foreignInstanceCount >= _INSTANCE_SWITCH_THRESHOLD) {
+          // Original instance is gone — switch to the new one
+          console.warn(`[UI] Switching to new server instance ${respInstanceId} (old: ${_lockedInstanceId})`);
+          _lockedInstanceId = respInstanceId;
+          _foreignInstanceCount = 0;
+        } else {
+          // Different instance — skip this entire poll
+          console.debug(`[UI] Dropping response from instance ${respInstanceId} (locked to ${_lockedInstanceId}, foreign count: ${_foreignInstanceCount})`);
+          return;
+        }
+      } else {
+        // Same instance — reset foreign counter
+        _foreignInstanceCount = 0;
+      }
+
       lastStatusCache = statusData;
 
       // ── First-poll-only sync ────────────────────────────────
