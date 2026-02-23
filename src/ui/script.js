@@ -31,20 +31,28 @@ document.addEventListener('DOMContentLoaded', () => {
     if (stopBtn) stopBtn.disabled = !enabled;
   }
 
+  // Guard: while a user-initiated start/stop is in-flight, prevent the
+  // polling loop from overwriting the trading status (avoids ACTIVE/STOPPED oscillation).
+  let _tradingToggleInFlight = false;
+
   startBtn?.addEventListener('click', async () => {
+    _tradingToggleInFlight = true;
     try {
       const res = await fetch('/api/trading/start', { method: 'POST' });
       const json = await res.json();
       if (json.success) updateTradingStatus(true);
     } catch (e) { console.error('Start trading failed:', e); }
+    _tradingToggleInFlight = false;
   });
 
   stopBtn?.addEventListener('click', async () => {
+    _tradingToggleInFlight = true;
     try {
       const res = await fetch('/api/trading/stop', { method: 'POST' });
       const json = await res.json();
       if (json.success) updateTradingStatus(false);
     } catch (e) { console.error('Stop trading failed:', e); }
+    _tradingToggleInFlight = false;
   });
 
   // Guard: while a user-initiated mode switch is in-flight, prevent the
@@ -390,8 +398,11 @@ document.addEventListener('DOMContentLoaded', () => {
       const statusData = statusJson.data;
       lastStatusCache = statusData;
 
-      // Update trading controls from status
-      updateTradingStatus(statusData.tradingEnabled ?? false);
+      // Update trading controls from status — skip when a user-initiated
+      // start/stop is in-flight to prevent ACTIVE/STOPPED oscillation.
+      if (!_tradingToggleInFlight) {
+        updateTradingStatus(statusData.tradingEnabled ?? false);
+      }
       // Only sync mode dropdown when no user-initiated switch is in-flight
       // and the server mode actually differs — prevents visual oscillation.
       if (modeSelect && !_modeSwitchInFlight) {

@@ -27,6 +27,11 @@
 - **Fix 2**: Mode dropdown is only updated when the server-reported mode actually differs from the current value.
 - **Fix 3**: Added `_fetchInProgress` concurrency guard — overlapping poll cycles are skipped entirely, preventing racing UI updates.
 
+#### Bug Fix: Trading Status (ACTIVE/STOPPED) Oscillation
+- Fixed the trading status indicator oscillating between ACTIVE and STOPPED after clicking Start/Stop Trading.
+- **Root cause**: same polling race as the mode oscillation — `updateTradingStatus()` was called unconditionally every 1.5s poll, overwriting user-initiated state changes while the POST was still in-flight.
+- **Fix**: Added `_tradingToggleInFlight` guard — the poll skips trading status updates while a user-initiated start/stop POST is pending.
+
 ### 2026-02-20
 
 #### Dynamic Stop Loss
