@@ -4,6 +4,15 @@
 
 ### 2026-02-22
 
+#### Dashboard Redesign
+- **Full UI redesign** from analytics-heavy layout to clean two-column fintech monitoring dashboard.
+- **Left column** (~60%): Status card (key/value table), Open Trade card, Trades table with filters.
+- **Right column** (~40%): KPI tiles (2×2 grid: Balance, PnL Today, PnL Yesterday, Win Rate), Ledger Summary, Equity Curve chart.
+- **Removed:** All 17 analytics mini-tables, analytics overview section, 3 analytics charts (PnL by Exit Reason, Entry Price Bucket, PnL Distribution), and all related JS rendering code (`renderGroupTable()`, `updateBarChart()`, `updatePnlHistogram()`).
+- **Visual refresh:** Shadow-based card depth, 28px KPI values, neutral dark background, 16px spacing. Green/red reserved for PnL values only.
+- **Responsive:** Below 900px columns stack vertically with KPIs on top.
+- **No backend changes.** The `/api/analytics` endpoint remains available for programmatic/AI access.
+
 #### CLOB Circuit Breaker + Fetch Timeouts
 - **New: Module-level circuit breaker in `polymarket.js`** — after 3 consecutive CLOB failures, halts all CLOB requests for an exponentially increasing backoff period (5s → 10s → 20s → … → 60s cap). Resets on first success.
 - `fetchClobPrice()` returns `null` when circuit is open (callers already handle null gracefully).

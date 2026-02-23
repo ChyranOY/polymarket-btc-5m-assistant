@@ -85,26 +85,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // top right pill (removed — replaced by trading controls)
 
-  // Analytics elements
-  const analyticsOverviewDiv = document.getElementById('analytics-overview');
-  const analyticsByExitBody = document.getElementById('analytics-by-exit');
-  const analyticsByPhaseBody = document.getElementById('analytics-by-phase');
-  const analyticsByPriceBody = document.getElementById('analytics-by-price');
-  const analyticsByInferredBody = document.getElementById('analytics-by-inferred');
-  const analyticsByTimeLeftBody = document.getElementById('analytics-by-timeleft');
-  const analyticsByProbBody = document.getElementById('analytics-by-prob');
-  const analyticsByLiqBody = document.getElementById('analytics-by-liq');
-  const analyticsByMktVolBody = document.getElementById('analytics-by-mktvol');
-  const analyticsBySpreadBody = document.getElementById('analytics-by-spread');
-  const analyticsByEdgeBody = document.getElementById('analytics-by-edge');
-  const analyticsByVwapDistBody = document.getElementById('analytics-by-vwapdist');
-  const analyticsByRsiBody = document.getElementById('analytics-by-rsi');
-  const analyticsByHoldBody = document.getElementById('analytics-by-hold');
-  const analyticsByMaeBody = document.getElementById('analytics-by-mae');
-  const analyticsByMfeBody = document.getElementById('analytics-by-mfe');
-  const analyticsBySideBody = document.getElementById('analytics-by-side');
-  const analyticsByRecBody = document.getElementById('analytics-by-rec');
-
   const recentTradesBody = document.getElementById('recent-trades-body');
 
   // Trade filters
@@ -139,16 +119,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Charts
   let chartEquity = null;
-  let chartExit = null;
-  let chartEntryPrice = null;
-  let chartPnlHist = null;
 
   const chartColors = {
-    good: '#2ee59d',
-    bad: '#ff5c7a',
-    accent: '#6ea8ff',
-    muted: 'rgba(231,238,252,0.45)',
-    grid: 'rgba(255,255,255,0.08)'
+    good: '#3fb950',
+    bad: '#f85149',
+    accent: '#58a6ff',
+    muted: 'rgba(230,237,243,0.4)',
+    grid: 'rgba(255,255,255,0.06)'
   };
 
   const ensureCharts = () => {
@@ -197,41 +174,6 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
-    const exitEl = document.getElementById('chart-exit');
-    if (exitEl && !chartExit) {
-      chartExit = new Chart(exitEl, {
-        type: 'bar',
-        data: { labels: [], datasets: [{ label: 'PnL', data: [], backgroundColor: [] }] },
-        options: { ...baseOpts, plugins: { ...baseOpts.plugins, legend: { display: false } } }
-      });
-    }
-
-    const entryEl = document.getElementById('chart-entry-price');
-    if (entryEl && !chartEntryPrice) {
-      chartEntryPrice = new Chart(entryEl, {
-        type: 'bar',
-        data: { labels: [], datasets: [{ label: 'PnL', data: [], backgroundColor: [] }] },
-        options: { ...baseOpts, plugins: { ...baseOpts.plugins, legend: { display: false } } }
-      });
-    }
-
-    const histEl = document.getElementById('chart-pnl-hist');
-    if (histEl && !chartPnlHist) {
-      chartPnlHist = new Chart(histEl, {
-        type: 'bar',
-        data: { labels: [], datasets: [{ label: 'Count', data: [], backgroundColor: 'rgba(231,238,252,0.18)' }] },
-        options: { ...baseOpts, plugins: { ...baseOpts.plugins, legend: { display: false } }, scales: { ...baseOpts.scales, y: { ...baseOpts.scales.y, beginAtZero: true } } }
-      });
-    }
-  };
-
-  const updateBarChart = (chart, rows, { maxBars = 12 } = {}) => {
-    if (!chart || !rows || !Array.isArray(rows)) return;
-    const r = rows.slice(0, maxBars);
-    chart.data.labels = r.map(x => x.key);
-    chart.data.datasets[0].data = r.map(x => (typeof x.pnl === 'number' ? x.pnl : 0));
-    chart.data.datasets[0].backgroundColor = r.map(x => ((x.pnl ?? 0) >= 0) ? 'rgba(46,229,157,0.55)' : 'rgba(255,92,122,0.55)');
-    chart.update('none');
   };
 
   const updateEquityCurve = (trades, startingBalance) => {
@@ -263,34 +205,6 @@ document.addEventListener('DOMContentLoaded', () => {
     chartEquity.update('none');
   };
 
-  const updatePnlHistogram = (trades, { limit = 200, bins = 18 } = {}) => {
-    if (!chartPnlHist) return;
-    const closed = (Array.isArray(trades) ? trades : []).filter(t => t.status === 'CLOSED');
-    const tail = closed.slice(Math.max(0, closed.length - limit));
-    const pnls = tail.map(t => Number(t.pnl) || 0);
-    if (!pnls.length) return;
-
-    const min = Math.min(...pnls);
-    const max = Math.max(...pnls);
-    const span = Math.max(1e-9, max - min);
-    const step = span / bins;
-    const counts = new Array(bins).fill(0);
-    for (const p of pnls) {
-      const idx = Math.min(bins - 1, Math.max(0, Math.floor((p - min) / step)));
-      counts[idx] += 1;
-    }
-
-    const labels = counts.map((_, i) => {
-      const a = min + i * step;
-      const b = min + (i + 1) * step;
-      return `${a.toFixed(0)}..${b.toFixed(0)}`;
-    });
-
-    chartPnlHist.data.labels = labels;
-    chartPnlHist.data.datasets[0].data = counts;
-    chartPnlHist.update('none');
-  };
-
   const setKpi = (el, text, cls = null) => {
     if (!el) return;
     el.textContent = text;
@@ -298,23 +212,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (cls) el.classList.add(cls);
   };
 
-  const renderGroupTable = (tbody, rows) => {
-    if (!tbody) return;
-    if (!rows || !Array.isArray(rows) || rows.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="3">No data.</td></tr>';
-      return;
-    }
-    const fmt = (n, d = 2) => (typeof n === 'number' && Number.isFinite(n)) ? n.toFixed(d) : 'N/A';
-    const r = rows.slice(0, 12);
-    tbody.innerHTML = r.map((x) => {
-      const pnl = (typeof x.pnl === 'number' && Number.isFinite(x.pnl)) ? x.pnl : 0;
-      const cls = pnl >= 0 ? 'positive' : 'negative';
-      return `<tr><td>${x.key}</td><td class="num">${x.count}</td><td class="num ${cls}">${fmt(pnl)}</td></tr>`;
-    }).join('');
-  };
-
   let lastTradesCache = [];
-  let lastAnalyticsCache = null;
   let lastStatusCache = null;
 
   const renderTradesTable = () => {
@@ -552,6 +450,8 @@ document.addEventListener('DOMContentLoaded', () => {
         // KPIs (LIVE) — keep simple
         setKpi(kpiBalance, '$' + formatCurrency(liveBalUsd), null);
         setKpi(kpiRealized, 'Realized: (available via /api/live/analytics)', null);
+        setKpi(kpiWinrate, '—', null);
+        setKpi(kpiProfitFactor, 'PF: —', null);
 
         // Disable charts in LIVE mode
         updateEquityCurve([], 0);
@@ -573,6 +473,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // KPIs (PAPER)
         setKpi(kpiBalance, '$' + formatCurrency(bal.balance ?? 0), null);
         setKpi(kpiRealized, 'Realized: $' + formatCurrency(bal.realized ?? 0), (Number(bal.realized) >= 0 ? 'positive' : 'negative'));
+        setKpi(kpiWinrate, formatPercentage(summary.winRate ?? 0), null);
 
         // update equity chart using STARTING balance (not current) to show curve
         updateEquityCurve(lastTradesCache, Number(bal.starting ?? 0) + 0);
@@ -584,80 +485,6 @@ document.addEventListener('DOMContentLoaded', () => {
       openTradeDiv.textContent = `Error loading trade data: ${msg}`;
       ledgerSummaryDiv.textContent = `Error loading summary data: ${msg}`;
       console.error('Error fetching status data:', error);
-    }
-
-    // ---- analytics ----
-    try {
-      // Analytics are intentionally hidden/disabled in LIVE mode UI.
-      if ((lastStatusCache?.mode || 'PAPER') === 'LIVE') {
-        if (analyticsOverviewDiv) analyticsOverviewDiv.textContent = '';
-        if (analyticsByExitBody) analyticsByExitBody.innerHTML = '<tr><td colspan="3">—</td></tr>';
-      } else {
-        const aRes = await fetch('/api/analytics');
-        const aJson = await aRes.json();
-        if (!aRes.ok || !aJson.success) throw new Error(aJson.error || 'analytics endpoint failed');
-        const analytics = aJson.data;
-        lastAnalyticsCache = analytics;
-
-      const fmt = (n, d = 2) => (typeof n === 'number' && Number.isFinite(n)) ? n.toFixed(d) : 'N/A';
-      const pct = (n, d = 1) => (typeof n === 'number' && Number.isFinite(n)) ? (n * 100).toFixed(d) + '%' : 'N/A';
-
-      const top = analytics?.overview || {};
-      const liq = analytics?.liquidity || {};
-      const liq24 = liq.last24h || {};
-
-      const liqLine = (label, obj) => {
-        if (!obj || obj.avg == null) return `${label}: N/A`;
-        return `${label}: avg=${Math.round(obj.avg)} (n=${obj.samples ?? 0}, p50=${obj.p50 != null ? Math.round(obj.p50) : 'N/A'})`;
-      };
-
-      analyticsOverviewDiv.textContent = [
-        `Closed Trades: ${top.closedTrades ?? 0}`,
-        `Wins / Losses: ${(top.wins ?? 0)} / ${(top.losses ?? 0)}`,
-        `Total PnL: $${fmt(top.totalPnL)}`,
-        `Win Rate: ${pct(top.winRate)}`,
-        `Avg Win: $${fmt(top.avgWin)}`,
-        `Avg Loss: $${fmt(top.avgLoss)}`,
-        `Profit Factor: ${fmt(top.profitFactor)}`,
-        `Expectancy / trade: $${fmt(top.expectancy)}`,
-        '',
-        `Polymarket liquidity (sampled):`,
-        liqLine('Last 1h', liq.last1h),
-        liqLine('Last 6h', liq.last6h),
-        liqLine('Last 24h', liq24)
-      ].join('\n');
-
-      // KPI winrate + PF
-      setKpi(kpiWinrate, pct(top.winRate), null);
-      setKpi(kpiProfitFactor, `PF: ${fmt(top.profitFactor, 2)}`, null);
-
-      renderGroupTable(analyticsByExitBody, analytics.byExitReason);
-      renderGroupTable(analyticsByPhaseBody, analytics.byEntryPhase);
-      renderGroupTable(analyticsByPriceBody, analytics.byEntryPriceBucket);
-      renderGroupTable(analyticsByInferredBody, analytics.bySideInferred);
-      renderGroupTable(analyticsByTimeLeftBody, analytics.byEntryTimeLeftBucket);
-      renderGroupTable(analyticsByProbBody, analytics.byEntryProbBucket);
-      renderGroupTable(analyticsByLiqBody, analytics.byEntryLiquidityBucket);
-      renderGroupTable(analyticsByMktVolBody, analytics.byEntryMarketVolumeBucket);
-      renderGroupTable(analyticsBySpreadBody, analytics.byEntrySpreadBucket);
-      renderGroupTable(analyticsByEdgeBody, analytics.byEntryEdgeBucket);
-      renderGroupTable(analyticsByVwapDistBody, analytics.byEntryVwapDistBucket);
-      renderGroupTable(analyticsByRsiBody, analytics.byEntryRsiBucket);
-      renderGroupTable(analyticsByHoldBody, analytics.byHoldTimeBucket);
-      renderGroupTable(analyticsByMaeBody, analytics.byMAEBucket);
-      renderGroupTable(analyticsByMfeBody, analytics.byMFEBucket);
-      renderGroupTable(analyticsBySideBody, analytics.bySide);
-      renderGroupTable(analyticsByRecBody, analytics.byRecActionAtEntry);
-
-      // Charts
-      updateBarChart(chartExit, analytics.byExitReason, { maxBars: 10 });
-      updateBarChart(chartEntryPrice, analytics.byEntryPriceBucket, { maxBars: 8 });
-      }
-
-    } catch (e) {
-      const msg = (e && e.message) ? e.message : String(e);
-      if (analyticsOverviewDiv) analyticsOverviewDiv.textContent = `Error loading analytics: ${msg}`;
-      if (analyticsByExitBody) analyticsByExitBody.innerHTML = '<tr><td colspan="3">Error</td></tr>';
     }
 
     // ---- trades ----
@@ -719,9 +546,15 @@ document.addEventListener('DOMContentLoaded', () => {
         setKpi(kpiTradesToday, `Trades: ${buckets[keyToday].n}`, null);
         setKpi(kpiPnlYesterday, '$' + formatCurrency(buckets[keyYesterday].pnl, 2), buckets[keyYesterday].pnl >= 0 ? 'positive' : 'negative');
         setKpi(kpiTradesYesterday, `Trades: ${buckets[keyYesterday].n}`, null);
+
+        // Profit factor from closed trades
+        const closedForPf = lastTradesCache.filter(t => t && t.status === 'CLOSED');
+        const grossWins = closedForPf.reduce((s, t) => s + Math.max(0, Number(t.pnl) || 0), 0);
+        const grossLosses = Math.abs(closedForPf.reduce((s, t) => s + Math.min(0, Number(t.pnl) || 0), 0));
+        const pf = grossLosses > 0 ? (grossWins / grossLosses).toFixed(2) : (grossWins > 0 ? '∞' : 'N/A');
+        setKpi(kpiProfitFactor, `PF: ${pf}`, null);
       }
 
-      updatePnlHistogram(lastTradesCache, { limit: 200, bins: 18 });
       renderTradesTable();
 
     } catch (error) {
