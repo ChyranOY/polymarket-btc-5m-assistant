@@ -2,12 +2,39 @@
  * @file Service/orchestration layer for backtesting.
  *
  * Connects the pure-function backtester (domain layer) to I/O sources
- * (ledger data, config). Application layer -- no direct external API calls.
+ * (trade store / ledger data, config). Application layer -- no direct external API calls.
+ *
+ * Phase 4: Reads from SQLite trade store (primary) with JSON ledger fallback.
  */
 
 import { initializeLedger, getLedger } from '../paper_trading/ledger.js';
 import { CONFIG } from '../config.js';
 import { replayTrades } from '../domain/backtester.js';
+
+/**
+ * Load trades from SQLite trade store (primary) with JSON ledger fallback.
+ * @returns {Object[]}
+ */
+function loadTrades() {
+  try {
+    const { getTradeStore } = require_tradeStore();
+    const store = getTradeStore();
+    return store.getAllTrades();
+  } catch {
+    // Fallback to JSON ledger if SQLite unavailable
+  }
+
+  const ledger = getLedger();
+  return Array.isArray(ledger.trades) ? ledger.trades : [];
+}
+
+/**
+ * Lazy-import trade store to avoid crashing if better-sqlite3 not installed.
+ */
+function require_tradeStore() {
+  // Dynamic import workaround for ESM
+  return { getTradeStore: globalThis.__tradeStore_getTradeStore };
+}
 
 /**
  * Extract the relevant threshold values from base config for comparison display.
@@ -57,8 +84,8 @@ function countEnrichedTrades(trades) {
 /**
  * Run a backtest with the given parameter overrides.
  *
- * Loads trades from the paper ledger, gets base config, and calls the
- * pure-function backtester. Returns the replay result enriched with
+ * Loads trades from the trade store (or JSON ledger fallback), gets base config,
+ * and calls the pure-function backtester. Returns the replay result enriched with
  * context metadata (base config, override config, trade counts).
  *
  * @param {Object} overrideConfig - Parameter overrides to test
@@ -76,12 +103,11 @@ export async function runBacktest(overrideConfig) {
 
   let trades;
   try {
-    const ledger = getLedger();
-    trades = Array.isArray(ledger.trades) ? ledger.trades : [];
+    trades = loadTrades();
   } catch (err) {
     return {
       error: true,
-      message: 'Failed to load trades from ledger: ' + (err?.message || String(err)),
+      message: 'Failed to load trades: ' + (err?.message || String(err)),
     };
   }
 

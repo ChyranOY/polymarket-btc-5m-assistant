@@ -91,10 +91,10 @@ Plans:
 - LIVE-05: Daily PnL kill-switch validated end-to-end (triggers correctly at threshold)
 
 **Success Criteria:**
-1. Every order has a tracked lifecycle: SUBMITTED → PENDING → FILLED → MONITORING → EXITED
+1. Every order has a tracked lifecycle: SUBMITTED -> PENDING -> FILLED -> MONITORING -> EXITED
 2. System periodically reconciles local position state with CLOB API and logs discrepancies
 3. Trade sizing subtracts estimated fees so actual position matches intended risk
-4. CLOB submission failures retry with exponential backoff (1s → 2s → 4s → … → 30s cap)
+4. CLOB submission failures retry with exponential backoff (1s -> 2s -> 4s -> ... -> 30s cap)
 5. Failed CLOB operations trigger alerts (logged + available for Phase 4 webhook integration)
 6. Daily PnL kill-switch activates correctly when loss threshold is hit in both paper and live modes
 7. Kill-switch activation is logged and prevents further trades for the rest of the trading day
@@ -107,10 +107,10 @@ Plans:
 **Plans:** 4 plans
 
 Plans:
-- [ ] 03-01-PLAN.md -- Order lifecycle state machine + retry policy (TDD)
-- [ ] 03-02-PLAN.md -- Fee-aware sizing + kill-switch hardening (TDD)
-- [ ] 03-03-PLAN.md -- Position reconciliation + sync status
-- [ ] 03-04-PLAN.md -- Dashboard lifecycle UI + kill-switch controls + fee-aware sizing integration
+- [x] 03-01-PLAN.md -- Order lifecycle state machine + retry policy (TDD)
+- [x] 03-02-PLAN.md -- Fee-aware sizing + kill-switch hardening (TDD)
+- [x] 03-03-PLAN.md -- Position reconciliation + sync status
+- [x] 03-04-PLAN.md -- Dashboard lifecycle UI + kill-switch controls + fee-aware sizing integration
 
 **Dependencies:** None (builds on existing LiveExecutor, but can be developed independently)
 
@@ -125,6 +125,14 @@ Plans:
 - INFRA-06: Auto-restart after crash with state recovery from persisted data
 - INFRA-07: Trade history persisted in structured format (SQLite or append-only log) beyond JSON ledger
 - INFRA-08: Zero-downtime deployment with instance coordination
+
+**Plans:** 4 plans
+
+Plans:
+- [x] 04-01-SUMMARY.md -- SQLite persistence (tradeStore with full schema, migration, all reads migrated)
+- [x] 04-02-SUMMARY.md -- Webhook alerting (Slack/Discord adapters, fire-and-forget, deduplication)
+- [x] 04-03-SUMMARY.md -- Crash recovery (PID lock, state persistence, startup restoration)
+- [x] 04-04-SUMMARY.md -- Zero-downtime deployment (trading lock, graceful drain, enhanced /health)
 
 **Success Criteria:**
 1. Critical events (crash, circuit breaker trip, kill-switch activation) send webhook to configured Slack/Discord URL
@@ -149,6 +157,14 @@ Plans:
 **Goal:** End-to-end validation across all phases, documentation, and production deployment readiness.
 
 **Requirements:** Cross-cutting (validates all prior phases work together)
+
+**Plans:** 4 plans
+
+Plans:
+- [x] 05-01-PLAN.md -- Integration tests (24 E2E tests: paper trading, live mock, crash recovery)
+- [x] 05-02-PLAN.md -- Documentation suite (README rewrite, CHANGELOG, DEPLOYMENT.md, CLAUDE.md updates)
+- [x] 05-03-PLAN.md -- Dashboard polish (status bar, SQLite fallback banner, mobile responsive)
+- [x] 05-04-PLAN.md -- Production readiness (preflight script, env validation, NODE_ENV defaults)
 
 **Success Criteria:**
 1. Full paper trading cycle works: signals -> entry gate -> trade -> journal -> analytics -> backtest
@@ -182,4 +198,4 @@ Phase 5 depends on all prior phases.
 
 ---
 *Roadmap created: 2026-02-23*
-*Last updated: 2026-02-23 after Phase 2 completion*
+*Last updated: 2026-02-23 after Phase 5 completion — all phases complete*

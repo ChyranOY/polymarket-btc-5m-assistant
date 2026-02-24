@@ -26,6 +26,39 @@
         </div>
       </div>
 
+      <!-- ── Compact Status Bar ── -->
+      <div class="status-bar" id="status-bar">
+        <div class="sb-item" id="sb-mode">
+          <span class="sb-label">Mode</span>
+          <span class="sb-value" id="sb-mode-value">--</span>
+        </div>
+        <div class="sb-item" id="sb-trading">
+          <span class="sb-label">Trading</span>
+          <span class="sb-value" id="sb-trading-value">--</span>
+        </div>
+        <div class="sb-item" id="sb-killswitch">
+          <span class="sb-label">Kill-Switch</span>
+          <span class="sb-value sb-ok" id="sb-ks-value">OK</span>
+        </div>
+        <div class="sb-item" id="sb-sqlite">
+          <span class="sb-label">SQLite</span>
+          <span class="sb-value sb-degraded" id="sb-sqlite-value">Checking</span>
+        </div>
+        <div class="sb-item" id="sb-webhooks">
+          <span class="sb-label">Webhooks</span>
+          <span class="sb-value sb-not-configured" id="sb-webhooks-value">--</span>
+        </div>
+        <div class="sb-item" id="sb-uptime">
+          <span class="sb-label">Uptime</span>
+          <span class="sb-value" id="sb-uptime-value">--</span>
+        </div>
+      </div>
+
+      <!-- ── SQLite Fallback Banner ── -->
+      <div class="fallback-banner hidden" id="sqlite-fallback-banner">
+        SQLite not available — using JSON ledger fallback. Install <code>better-sqlite3</code> for structured persistence.
+      </div>
+
       <!-- ── Tab Navigation ── -->
       <div class="tab-nav">
         <button class="tab-btn active" data-tab="dashboard">Dashboard</button>

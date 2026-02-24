@@ -1,258 +1,205 @@
 # Polymarket BTC 5m Assistant
 
-A real-time console trading assistant for Polymarket **"Bitcoin Up or Down" 5-minute** markets.
+A high-frequency trading bot for Polymarket **"Bitcoin Up or Down" 5-minute** contracts. Monitors BTC price movements, calculates trading signals using technical indicators (RSI, MACD, VWAP), and executes trades in both **paper trading mode** (simulated) and **live trading mode** (CLOB via Polymarket API).
 
 ## Features
 
-### Market + data feeds
+### Dual-Mode Trading
+- **Paper mode**: Simulated fills using Polymarket orderbook data, local JSON ledger
+- **Live mode**: Real CLOB execution via Polymarket API with full order lifecycle management
 
-- **Auto-select latest 5m Polymarket market** (or pin a slug via `POLYMARKET_SLUG`).
-- Pulls **Polymarket prices** (UP/DOWN) + orderbook spread + market metadata.
-- BTC reference price primarily from **Chainlink BTC/USD** (via Polymarket live feed + on-chain fallback on Polygon RPC/WSS).
-- Optional Kraken REST used for seeding/backfilling candles (rate-limited + cached).
+### Market Data & Signals
+- Auto-selects latest 5m Polymarket market (or pin via `POLYMARKET_SLUG`)
+- BTC reference price from Chainlink (Polymarket live feed + on-chain Polygon fallback)
+- Coinbase spot price for impulse/basis comparisons
+- Kraken REST for candle seeding/backfill
+- 1-minute candles built from ticks with warm-start backfill
 
-### Indicators + signal engine
+### Technical Indicators
+- **Heiken Ashi** (trend confirmation with consecutive candle count)
+- **RSI** with slope detection (momentum + direction)
+- **MACD** with histogram delta (momentum strength + acceleration)
+- **VWAP** with slope and distance (mean reversion + trend)
+- Market regime detection (Oversold / Ranging / Overbought)
 
-- Builds **1m candles** from ticks (warm-starts with REST backfill so indicators populate quickly).
-- Computes and displays: **Heiken Ashi**, **RSI**, **MACD**, **VWAP** (+ slope/dist), plus helper regime/score outputs.
-- Produces a simple **direction probability** (LONG/SHORT) used for paper-trading decisions.
+### Trading Controls
+- 24 entry blockers (risk, time, indicator, market quality)
+- 8 exit conditions (rollover, probability flip, take profit, max loss, settlement, trailing TP)
+- Dynamic bankroll-based position sizing with min/max bounds
+- Circuit breaker (consecutive loss cooldown)
+- Daily PnL kill-switch with midnight PT reset and manual override
+- Weekend tightening (stricter thresholds when markets are thin)
 
-### Paper trading (Polymarket contracts)
+### Analytics & Optimization
+- **Period analytics**: Performance by day, week, and trading session
+- **Segmented views**: Win rate / profit factor by entry phase, session, market regime
+- **Advanced metrics**: Sharpe ratio, Sortino ratio, max drawdown (USD + %)
+- **Backtest harness**: Replay historical trades with modified thresholds
+- **Grid search optimizer**: Test parameter combinations, ranked by profit factor
+- **Suggestion engine**: Analyzes blocker frequency, suggests threshold adjustments with projected impact
 
-- Trades the **Polymarket UP/DOWN contracts** (not BTC spot). Entry/exit/PnL are based on Polymarket contract prices.
-- **Local JSON ledger** persisted to `paper_trading/trades.json`.
-- **Bankroll-based position sizing**:
-  - `STARTING_BALANCE`, `STAKE_PCT`, `MIN_TRADE_USD`, `MAX_TRADE_USD`.
-- **Dynamic exits**:
-  - Always closes **near the end of the 5m market window** (“End of Candle”) to avoid rollover weirdness.
-  - Closes on **market slug rollover** (safety backstop).
-  - **Conditional stop loss** (`STOP_LOSS_PCT`) that triggers only when loss threshold is hit _and_ the model is against the position (reduces chop-outs).
-- **Safety guards**:
-  - Requires indicators to be populated before entering.
-  - Avoids "dust"/invalid Polymarket prices (`MIN_POLY_PRICE`, `MAX_POLY_PRICE`).
-  - Market quality gating: minimum Polymarket **liquidity** + **tight max spread**.
-  - Consolidation avoidance: blocks entries when BTC is too choppy (range filter) and when the model is near 50/50 (conviction filter).
-  - Schedule gating: **weekday-only entries** with a **Friday cutoff** (exits always allowed).
+### Live Trading Hardening
+- Full order lifecycle tracking (SUBMITTED -> PENDING -> FILLED -> MONITORING -> EXITED)
+- Position reconciliation (local vs. CLOB state comparison every tick)
+- Fee-aware position sizing
+- Retry with exponential backoff (1s -> 2s -> 4s) + circuit breaker for CLOB failures
 
-### UI + debugging
+### Infrastructure & Reliability
+- **SQLite persistence**: Structured trade store with 20+ fields per trade (JSON ledger fallback)
+- **Webhook alerts**: Slack/Discord notifications for critical events (kill-switch, crash, circuit breaker)
+- **Crash recovery**: PID lock detection, state persistence, automatic restoration on restart
+- **Zero-downtime deployment**: Trading lock for instance coordination, graceful SIGTERM drain
+- **Health endpoint**: `/health` for load balancer probes
 
-- Runs a lightweight UI at **http://localhost:3000**:
-  - **/api/status**: runtime snapshot + open trade + balance + “Why no entry?” blockers.
-  - **/api/trades**: recent trades (newest first in the UI).
-  - **/api/analytics**: performance analytics tables (PnL by exit reason/phase/price bucket/etc.) + liquidity sampling stats.
-- “**Why no entry?**” explains exactly which gates are blocking entries.
-
-### Analytics (performance + market conditions)
-
-- Analytics breakdowns include:
-  - by **exit reason**, **entry phase**, **entry price bucket**, **prob bucket**, **time-left bucket**, **liquidity bucket**, **spread bucket**, **side**, **rec action**.
-- Captures **entry metadata** on new trades (prob/edge/liquidity/spread/time-left) for better post-trade analysis.
-- Samples Polymarket **liquidity over time** to `paper_trading/liquidity_samples.jsonl` and reports 1h/6h/24h stats.
-
-### Ops / reliability
-
-- Designed to run under a process manager (e.g. **PM2**) to avoid session SIGTERM/SIGKILL issues.
-- Built-in REST throttling/caching and defensive error handling to avoid crashes.
-
-It combines:
-
-- Polymarket market selection + UP/DOWN prices + liquidity
-- Polymarket live WS **Chainlink BTC/USD CURRENT PRICE** (same feed shown on the Polymarket UI)
-- Fallback to on-chain Chainlink (Polygon) via HTTP/WSS RPC
-- Binance spot price for reference
-- Short-term TA snapshot (Heiken Ashi, RSI, MACD, VWAP, Delta 1/3m)
-- A simple live **Predict (LONG/SHORT %)** derived from the assistant’s current TA scoring
+### Dashboard
+- Three-tab web UI (Dashboard, Analytics, Optimizer)
+- Real-time status with 1.5s polling
+- Compact status bar (Mode, Trading, Kill-switch, SQLite, Webhooks, Uptime)
+- Trade history with filtering (limit, reason, side, losses only)
+- Equity curve chart, drawdown chart
+- Kill-switch progress bar with override button
+- Order lifecycle badges, sync indicator dot
+- Instance locking for multi-server production
 
 ## Requirements
 
-- Node.js **18+** (https://nodejs.org/en)
-- npm (comes with Node)
+- **Node.js 18+** (recommended: 20 LTS)
+- **npm** (bundled with Node.js)
+- **better-sqlite3** (optional, for structured trade persistence)
 
-## Run from terminal (step-by-step)
-
-### 1) Clone the repository
-
-```bash
-git clone <YOUR_5M_REPO_URL_HERE>
-```
-
-Alternative (no git):
-
-- Click the green `<> Code` button on GitHub
-- Choose `Download ZIP`
-- Extract the ZIP
-- Open a terminal in the extracted project folder
-
-Then open a terminal in the project folder.
-
-### 2) Install dependencies
+## Quick Start
 
 ```bash
+# 1. Clone
+git clone <repo-url>
+cd polymarket-btc-5m-assistant
+
+# 2. Install
 npm install
+
+# 3. Configure (optional)
+cp .env.example .env
+# Edit .env with your settings
+
+# 4. Run pre-flight checks
+npm run preflight
+
+# 5. Start
+npm start
+
+# 6. Open dashboard
+# http://localhost:3000
 ```
-
-### 3) (Optional) Set environment variables
-
-You can run without extra config (defaults are included), but for more stable Chainlink fallback it’s recommended to set at least one Polygon RPC.
-
-#### Windows PowerShell (current terminal session)
-
-```powershell
-$env:POLYGON_RPC_URL = "https://polygon-rpc.com"
-$env:POLYGON_RPC_URLS = "https://polygon-rpc.com,https://rpc.ankr.com/polygon"
-$env:POLYGON_WSS_URLS = "wss://polygon-bor-rpc.publicnode.com"
-```
-
-Optional Polymarket settings:
-
-```powershell
-$env:POLYMARKET_AUTO_SELECT_LATEST = "true"
-# $env:POLYMARKET_SLUG = "btc-updown-5m-1771019100"   # pin a specific market
-```
-
-#### Windows CMD (current terminal session)
-
-```cmd
-set POLYGON_RPC_URL=https://polygon-rpc.com
-set POLYGON_RPC_URLS=https://polygon-rpc.com,https://rpc.ankr.com/polygon
-set POLYGON_WSS_URLS=wss://polygon-bor-rpc.publicnode.com
-```
-
-Optional Polymarket settings:
-
-```cmd
-set POLYMARKET_AUTO_SELECT_LATEST=true
-REM set POLYMARKET_SLUG=btc-updown-5m-1771019100
-```
-
-Notes:
-
-- These environment variables apply only to the current terminal window.
-- If you want permanent env vars, set them via Windows System Environment Variables or use a `.env` loader of your choice.
 
 ## Configuration
 
-This project reads configuration from environment variables.
+All configuration is via environment variables (or `.env` file). See `src/config.js` for the full list.
 
-You can set them in your shell, or create a `.env` file and load it using your preferred method.
+### Essential Settings
 
-### Polymarket
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `POLYMARKET_AUTO_SELECT_LATEST` | Auto-pick latest 5m market | `true` |
+| `POLYGON_RPC_URL` | Chainlink BTC price feed | `https://polygon-rpc.com` |
+| `STARTING_BALANCE` | Paper trading bankroll | `1000` |
+| `STAKE_PCT` | Position size as % of balance | `0.08` (8%) |
+| `DAILY_LOSS_LIMIT` | Kill-switch threshold (USD) | `50` |
+| `UI_PORT` | Dashboard port | `8080` |
 
-- `POLYMARKET_AUTO_SELECT_LATEST` (default: `true`)
-  - When `true`, automatically picks the latest 5m market.
-- `POLYMARKET_SERIES_ID` (default: `10192`)
-- `POLYMARKET_SERIES_SLUG` (default: `btc-up-or-down-5m`)
-- `POLYMARKET_SLUG` (optional)
-  - If set, the assistant will target a specific market slug.
-- `POLYMARKET_LIVE_WS_URL` (default: `wss://ws-live-data.polymarket.com`)
+### Live Trading
 
-### Chainlink on Polygon (fallback)
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LIVE_TRADING_ENABLED` | Enable live CLOB trading | `false` |
+| `FUNDER_ADDRESS` | CLOB funder wallet | (required) |
+| `LIVE_MAX_PER_TRADE_USD` | Max trade size | `7` |
+| `LIVE_MAX_DAILY_LOSS_USD` | Live daily loss limit | `30` |
 
-- `CHAINLINK_BTC_USD_AGGREGATOR`
-  - Default: `0xc907E116054Ad103354f2D350FD2514433D57F6f`
+### Monitoring
 
-HTTP RPC:
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `WEBHOOK_URL` | Slack/Discord webhook URL | (optional) |
+| `WEBHOOK_TYPE` | `slack` or `discord` | (optional) |
+| `DATA_DIR` | Data directory for SQLite, state files | `./data` |
 
-- `POLYGON_RPC_URL` (default: `https://polygon-rpc.com`)
-- `POLYGON_RPC_URLS` (optional, comma-separated)
-  - Example: `https://polygon-rpc.com,https://rpc.ankr.com/polygon`
+For complete configuration reference, proxy setup, and deployment guide, see [DEPLOYMENT.md](./DEPLOYMENT.md).
 
-WSS RPC (optional but recommended for more real-time fallback):
-
-- `POLYGON_WSS_URL` (optional)
-- `POLYGON_WSS_URLS` (optional, comma-separated)
-
-### Proxy support
-
-The bot supports HTTP(S) proxies for both HTTP requests (fetch) and WebSocket connections.
-
-Supported env vars (standard):
-
-- `HTTPS_PROXY` / `https_proxy`
-- `HTTP_PROXY` / `http_proxy`
-- `ALL_PROXY` / `all_proxy`
-
-Examples:
-
-PowerShell:
-
-```powershell
-$env:HTTPS_PROXY = "http://127.0.0.1:8080"
-# or
-$env:ALL_PROXY = "socks5://127.0.0.1:1080"
-```
-
-CMD:
-
-```cmd
-set HTTPS_PROXY=http://127.0.0.1:8080
-REM or
-set ALL_PROXY=socks5://127.0.0.1:1080
-```
-
-#### Proxy with username + password (simple guide)
-
-1. Take your proxy host and port (example: `1.2.3.4:8080`).
-
-2. Add your login and password in the URL:
-
-- HTTP/HTTPS proxy:
-  - `http://USERNAME:PASSWORD@HOST:PORT`
-- SOCKS5 proxy:
-  - `socks5://USERNAME:PASSWORD@HOST:PORT`
-
-3. Set it in the terminal and run the bot.
-
-PowerShell:
-
-```powershell
-$env:HTTPS_PROXY = "http://USERNAME:PASSWORD@HOST:PORT"
-npm start
-```
-
-CMD:
-
-```cmd
-set HTTPS_PROXY=http://USERNAME:PASSWORD@HOST:PORT
-npm start
-```
-
-Important: if your password contains special characters like `@` or `:` you must URL-encode it.
-
-Example:
-
-- password: `p@ss:word`
-- encoded: `p%40ss%3Aword`
-- proxy URL: `http://user:p%40ss%3Aword@1.2.3.4:8080`
-
-## Run
+## Testing
 
 ```bash
-npm start
+# Run all tests (unit + integration)
+npm test
+
+# Pre-flight check (tests + env validation)
+npm run preflight
 ```
 
-### Stop
+## Architecture
 
-Press `Ctrl + C` in the terminal.
+```
+src/
+  domain/           Pure functions (no side effects)
+    entryGate.js      24 entry blockers
+    exitEvaluator.js  8 exit conditions
+    sizing.js         Dynamic trade size
+    killSwitch.js     Kill-switch logic
+    orderLifecycle.js Order state machine
+    retryPolicy.js    Error classification + retry
+    reconciliation.js Position reconciliation
+    backtester.js     Trade replay engine
+    optimizer.js      Grid search
 
-### Update to latest version
+  application/      Orchestration + state
+    TradingEngine.js  Main loop orchestrator
+    TradingState.js   Mutable session state
+    ModeManager.js    Paper/Live toggle
 
-```bash
-git pull
-npm install
-npm start
+  infrastructure/   External I/O
+    executors/        PaperExecutor, LiveExecutor
+    persistence/      SQLite trade store
+    webhooks/         Slack/Discord alerting
+    recovery/         Crash detection + state persistence
+    deployment/       Trading lock, graceful shutdown
+
+  services/         Application services
+    analyticsService.js   Trade analytics
+    backtestService.js    Backtest orchestration
+    suggestionService.js  Threshold suggestions
+
+  ui/               Dashboard
+    index.html, script.js, style.css, analytics.js
+    server.js         Express API routes
 ```
 
-## Notes / Troubleshooting
+## API Endpoints
 
-- If you see no Chainlink updates:
-  - Polymarket WS might be temporarily unavailable. The bot falls back to Chainlink on-chain price via Polygon RPC.
-  - Ensure at least one working Polygon RPC URL is configured.
-- If the console looks like it “spams” lines:
-  - The renderer uses `readline.cursorTo` + `clearScreenDown` for a stable, static screen, but some terminals may still behave differently.
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check for load balancers |
+| `/api/status` | GET | Engine state + signals + entry debug |
+| `/api/trades` | GET | Paper trade history |
+| `/api/analytics` | GET | Period analytics + advanced metrics |
+| `/api/trading/start` | POST | Enable trading |
+| `/api/trading/stop` | POST | Disable trading |
+| `/api/mode` | POST | Switch paper/live mode |
+| `/api/backtest` | POST | Run backtest with custom params |
+| `/api/optimizer` | POST | Run grid search optimizer |
+| `/api/kill-switch/status` | GET | Daily PnL vs. limit |
+| `/api/kill-switch/override` | POST | Override kill-switch |
+| `/api/metrics` | GET | Operational metrics |
+| `/api/diagnostics` | GET | Entry blocker diagnostics |
+
+## Documentation
+
+- **[DEPLOYMENT.md](./DEPLOYMENT.md)** - Production deployment guide, DigitalOcean setup, troubleshooting
+- **[CHANGELOG.md](./CHANGELOG.md)** - Release history
+- **[CLAUDE.md](./CLAUDE.md)** - Codebase reference for Claude Code
 
 ## Safety
 
-This is not financial advice. Use at your own risk.
+This is not financial advice. Use at your own risk. Always start in paper mode and validate with the backtest harness before enabling live trading.
+
+---
 
 created by @krajekis

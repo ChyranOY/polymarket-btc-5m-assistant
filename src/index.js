@@ -50,6 +50,15 @@ import { initializeLedger } from "./paper_trading/ledger.js";
 // UI Server
 import { startUIServer } from "./ui/server.js";
 
+// Phase 4: Infrastructure & Monitoring
+import { getStateManager } from "./infrastructure/recovery/stateManager.js";
+import { getTradingLock } from "./infrastructure/deployment/tradingLock.js";
+import { getWebhookService } from "./infrastructure/webhooks/webhookService.js";
+import { installGracefulShutdown } from "./infrastructure/deployment/gracefulShutdown.js";
+
+// Phase 5: Startup validation
+import { logEnvValidation } from "./infrastructure/deployment/envValidation.js";
+
 // --- TUI Helpers ---
 import {
   ANSI, screenWidth, sepLine, renderScreen, kv, centerText,
@@ -173,9 +182,52 @@ function renderConsole({ indicatorsData, timeAware, marketUp, marketDown, klines
 }
 
 async function startApp() {
+  // --- Phase 5: Startup environment validation ---
+  logEnvValidation();
+
   // --- Initialization ---
   await initializeLedger(); // Ensure ledger file structure is correct
   applyGlobalProxyFromEnv(); // Apply proxy settings from environment
+
+  // --- Phase 4: Infrastructure initialization ---
+
+  // 1. State Manager — crash detection + state recovery
+  let stateManager = null;
+  let crashRecovery = null;
+  try {
+    stateManager = getStateManager();
+    crashRecovery = stateManager.startup();
+    if (crashRecovery.crashed) {
+      console.warn(`[Phase 4] Previous crash detected (PID: ${crashRecovery.previousPid ?? 'unknown'}). State will be restored.`);
+    }
+  } catch (err) {
+    console.warn('[Phase 4] State manager init failed:', err.message);
+  }
+
+  // 2. Webhook service — critical alerts
+  let webhookService = null;
+  try {
+    webhookService = getWebhookService();
+    if (webhookService.isConfigured()) {
+      console.log(`[Phase 4] Webhook alerts configured (${webhookService.type})`);
+    }
+  } catch (err) {
+    console.warn('[Phase 4] Webhook service init failed:', err.message);
+  }
+
+  // 3. Trading lock — instance coordination
+  let tradingLock = null;
+  try {
+    tradingLock = getTradingLock();
+    const lockResult = await tradingLock.waitForLock(35_000);
+    if (lockResult.acquired) {
+      console.log(`[Phase 4] Trading lock acquired (${lockResult.reason})`);
+    } else {
+      console.warn(`[Phase 4] Could not acquire trading lock: ${lockResult.reason}. Trading will be disabled.`);
+    }
+  } catch (err) {
+    console.warn('[Phase 4] Trading lock init failed:', err.message);
+  }
 
   // --- Unified Trading Engine (Clean Architecture) ---
   // getMarket thunk: lazily resolves the current Polymarket market
@@ -222,9 +274,38 @@ async function startApp() {
     config: activeConfig,
   });
 
+  // Phase 4: Restore state from crash recovery
+  if (crashRecovery?.restoredState && stateManager) {
+    const restored = stateManager.restoreState(engine.state, crashRecovery.restoredState);
+    if (restored) {
+      console.log('[Phase 4] Critical state restored from crash recovery');
+
+      // Send webhook alert about crash recovery
+      if (webhookService?.isConfigured()) {
+        webhookService.alertCrash({
+          error: `Recovered from crash (previous PID: ${crashRecovery.previousPid ?? 'unknown'})`,
+          signal: 'CRASH_RECOVERY',
+        }).catch(() => {}); // fire-and-forget
+      }
+    }
+  }
+
   // Expose for API routes (server.js, statusService.js)
   globalThis.__tradingEngine = engine;
   globalThis.__modeManager = modeManager;
+
+  // 4. Install graceful shutdown handlers (Phase 4: INFRA-08)
+  let _httpServer = null;
+  installGracefulShutdown({
+    getEngine: () => engine,
+    getStateManager: () => stateManager,
+    getTradingLock: () => tradingLock,
+    getWebhookService: () => webhookService,
+    getTradeStore: () => {
+      try { return globalThis.__tradeStore_getTradeStore?.(); } catch { return null; }
+    },
+    getServer: () => _httpServer,
+  });
 
   // Build lightweight 1m candles from Chainlink ticks for indicators (no exchange dependency).
   const chainlinkCandles1m = [];
@@ -301,7 +382,7 @@ async function startApp() {
   });
 
   // Start UI server
-  try { startUIServer(); } catch (err) { console.error('Failed to start UI server:', err); }
+  try { _httpServer = startUIServer(); } catch (err) { console.error('Failed to start UI server:', err); }
 
   console.log(`--- Bot Started ---`);
   console.log(`Mode: ${modeManager.getMode()} | Live available: ${modeManager.isLiveAvailable()}`);
@@ -309,8 +390,16 @@ async function startApp() {
   console.log(`BTC feed: Chainlink WS (candles built from ticks).`);
   console.log(`UI Server running on http://localhost:${CONFIG.uiPort}. Use 'ngrok http ${CONFIG.uiPort}' for remote access.`);
 
+  // Phase 4 status
+  if (stateManager) console.log(`[Phase 4] State recovery: ${crashRecovery?.crashed ? 'RECOVERED' : 'clean start'}`);
+  if (webhookService?.isConfigured()) console.log(`[Phase 4] Webhooks: enabled (${webhookService.type})`);
+  if (tradingLock?.isLockHolder()) console.log(`[Phase 4] Trading lock: held (ID: ${tradingLock.instanceId})`);
+
   let prevCurrentPrice = null;
   const csvHeader = ["timestamp", "time_left", "regime", "signal", "model_up", "model_down", "mkt_up", "mkt_down", "edge_up", "edge_down", "rec"];
+
+  // State persistence tick counter (persist every ~30s based on 1s poll interval)
+  let _statePersistCounter = 0;
 
   while (true) {
     try {
@@ -453,6 +542,46 @@ async function startApp() {
 
     // Unified trading engine: handles both paper and live via active executor
     await engine.processSignals(signalsForTrader, klines1m);
+
+    // Phase 4: Periodic state persistence (every ~30 ticks = ~30s at 1s interval)
+    _statePersistCounter++;
+    if (stateManager && _statePersistCounter >= 30) {
+      stateManager.persistState(engine.state);
+      _statePersistCounter = 0;
+    }
+
+    // Phase 4: Webhook alerts for critical events
+    if (webhookService?.isConfigured()) {
+      // Check kill-switch
+      const ksConfig = engine.config?.maxDailyLossUsd ?? CONFIG.paperTrading?.maxDailyLossUsd;
+      const ksCheck = engine.state?.checkKillSwitch?.(ksConfig);
+      if (ksCheck?.triggered) {
+        webhookService.alertKillSwitch({
+          todayPnl: engine.state.todayRealizedPnl,
+          limit: ksConfig,
+          overrideCount: engine.state.killSwitchState?.overrideCount ?? 0,
+        }).catch(() => {}); // fire-and-forget
+      }
+
+      // Check circuit breaker
+      const cbConfig = engine.config?.circuitBreakerConsecutiveLosses ?? 5;
+      const cbCooldown = engine.config?.circuitBreakerCooldownMs ?? 300000;
+      if (engine.state?.circuitBreakerTrippedAtMs !== null) {
+        webhookService.alertCircuitBreaker({
+          consecutiveLosses: engine.state.consecutiveLosses,
+          cooldownMs: cbCooldown,
+        }).catch(() => {}); // fire-and-forget
+      }
+
+      // Check for new failure events (ORDER_FAILED)
+      const failureEvents = engine.executor?.getFailureEvents?.() ?? [];
+      if (failureEvents.length > 0) {
+        const latest = failureEvents[failureEvents.length - 1];
+        if (latest.type === 'ORDER_FAILED') {
+          webhookService.alertOrderFailed(latest).catch(() => {});
+        }
+      }
+    }
 
     const signal = rec.action === "ENTER" ? `${rec.side} (${rec.phase})` : "NO TRADE";
     appendCsvRow("./logs/signals.csv", csvHeader, [new Date().toISOString(), timing.elapsedMinutes.toFixed(3), signal, timeAware.adjustedUp, timeAware.adjustedDown, marketUp, marketDown, edge.edgeUp, edge.edgeDown, rec.action === "ENTER" ? `${rec.side}:${rec.phase}` : "NO_TRADE"]);

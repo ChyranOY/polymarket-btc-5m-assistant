@@ -881,6 +881,162 @@ h1 {
   .trading-controls {
     flex-wrap: wrap;
   }
+
+  .status-bar {
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 8px;
+  }
+
+  .sb-item {
+    padding: 4px 8px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    flex: 1 0 45%;
+  }
+
+  .sb-item:last-child {
+    border-bottom: none;
+  }
+
+  .tab-nav {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .tab-btn {
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+
+  #recent-trades-table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .period-table,
+  .segmented-table,
+  .optimizer-results-table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .param-ranges-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Phase 5: Compact Status Bar ─────────────────────────────── */
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--surface);
+  border-radius: 8px;
+  padding: 6px 12px;
+  margin-bottom: 12px;
+  box-shadow: var(--card-shadow);
+  overflow-x: auto;
+  flex-wrap: nowrap;
+}
+
+.sb-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  border-right: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.sb-item:last-child {
+  border-right: none;
+}
+
+.sb-item:first-child {
+  padding-left: 4px;
+}
+
+.sb-label {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.sb-value {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sb-ok {
+  color: var(--good);
+}
+
+.sb-warn {
+  color: var(--warn);
+}
+
+.sb-danger {
+  color: var(--bad);
+}
+
+.sb-degraded {
+  color: var(--warn);
+}
+
+.sb-not-configured {
+  color: var(--muted);
+  font-style: italic;
+  font-weight: 400;
+}
+
+/* ── Phase 5: SQLite Fallback Banner ─────────────────────────── */
+
+.fallback-banner {
+  background: rgba(210, 153, 34, 0.1);
+  border: 1px solid rgba(210, 153, 34, 0.25);
+  color: var(--warn);
+  font-size: 12px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.fallback-banner code {
+  font-family: var(--mono);
+  background: rgba(210, 153, 34, 0.15);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.fallback-banner.hidden {
+  display: none;
+}
+
+/* ── Phase 5: Graceful Degradation Indicators ──────────────────── */
+
+.degraded-indicator {
+  opacity: 0.5;
+  position: relative;
+}
+
+.degraded-indicator::after {
+  content: 'Not Configured';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+  white-space: nowrap;
 }
 
 /* ── Phase 3: Kill-Switch Panel ─────────────────────────────── */

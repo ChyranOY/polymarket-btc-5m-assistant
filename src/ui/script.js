@@ -131,6 +131,91 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // top right pill (removed — replaced by trading controls)
 
+  // Phase 5: Status bar elements
+  const sbModeValue = document.getElementById('sb-mode-value');
+  const sbTradingValue = document.getElementById('sb-trading-value');
+  const sbKsValue = document.getElementById('sb-ks-value');
+  const sbSqliteValue = document.getElementById('sb-sqlite-value');
+  const sbWebhooksValue = document.getElementById('sb-webhooks-value');
+  const sbUptimeValue = document.getElementById('sb-uptime-value');
+  const sqliteFallbackBanner = document.getElementById('sqlite-fallback-banner');
+
+  // Phase 5: Fetch metrics for status bar (one-shot + periodic)
+  let _metricsCache = null;
+  const fetchMetrics = async () => {
+    try {
+      const res = await fetch('/api/metrics');
+      const json = await res.json();
+      if (json.success) _metricsCache = json.data;
+    } catch { /* best-effort */ }
+  };
+
+  const updateStatusBar = () => {
+    const m = _metricsCache;
+    const localMode = (modeSelect?.value || 'paper').toUpperCase();
+    const localTrading = tradingStatusEl?.textContent === 'ACTIVE';
+
+    // Mode
+    if (sbModeValue) {
+      sbModeValue.textContent = localMode;
+      sbModeValue.className = 'sb-value ' + (localMode === 'LIVE' ? 'sb-warn' : 'sb-ok');
+    }
+
+    // Trading
+    if (sbTradingValue) {
+      sbTradingValue.textContent = localTrading ? 'Active' : 'Stopped';
+      sbTradingValue.className = 'sb-value ' + (localTrading ? 'sb-ok' : 'sb-danger');
+    }
+
+    // Kill-switch
+    if (sbKsValue && m) {
+      const ksTripped = m.state?.circuitBreakerTripped;
+      if (ksTripped) {
+        sbKsValue.textContent = 'Tripped';
+        sbKsValue.className = 'sb-value sb-danger';
+      } else {
+        sbKsValue.textContent = 'OK';
+        sbKsValue.className = 'sb-value sb-ok';
+      }
+    }
+
+    // SQLite
+    if (sbSqliteValue && m) {
+      const sqliteOk = m.persistence?.sqlite;
+      sbSqliteValue.textContent = sqliteOk ? 'Connected' : 'Fallback (JSON)';
+      sbSqliteValue.className = 'sb-value ' + (sqliteOk ? 'sb-ok' : 'sb-degraded');
+
+      // Show/hide fallback banner
+      if (sqliteFallbackBanner) {
+        sqliteFallbackBanner.classList.toggle('hidden', sqliteOk !== false);
+      }
+    }
+
+    // Webhooks
+    if (sbWebhooksValue && m) {
+      // Webhooks info not in /api/metrics directly; check if services exist
+      const hasServices = m.services !== null;
+      sbWebhooksValue.textContent = hasServices ? 'Configured' : 'Not configured';
+      sbWebhooksValue.className = 'sb-value ' + (hasServices ? 'sb-ok' : 'sb-not-configured');
+    }
+
+    // Uptime
+    if (sbUptimeValue && m) {
+      const secs = m.uptime ?? 0;
+      if (secs < 60) {
+        sbUptimeValue.textContent = `${Math.round(secs)}s`;
+      } else if (secs < 3600) {
+        sbUptimeValue.textContent = `${Math.floor(secs / 60)}m`;
+      } else {
+        sbUptimeValue.textContent = `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
+      }
+    }
+  };
+
+  // Fetch metrics on load and every 10s
+  fetchMetrics().then(updateStatusBar);
+  setInterval(() => fetchMetrics().then(updateStatusBar), 10_000);
+
   const recentTradesBody = document.getElementById('recent-trades-body');
 
   // Trade filters
@@ -408,6 +493,21 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       lastStatusCache = statusData;
+
+      // Update status bar with kill-switch data from status response
+      const ksData = statusData.killSwitch;
+      if (sbKsValue && ksData) {
+        if (ksData.active && !ksData.overrideActive) {
+          sbKsValue.textContent = 'ACTIVE';
+          sbKsValue.className = 'sb-value sb-danger';
+        } else if (ksData.overrideActive) {
+          sbKsValue.textContent = 'Overridden';
+          sbKsValue.className = 'sb-value sb-warn';
+        } else {
+          sbKsValue.textContent = 'OK';
+          sbKsValue.className = 'sb-value sb-ok';
+        }
+      }
 
       // ── First-poll-only sync ────────────────────────────────
       // Sync mode + tradingEnabled from the server ONCE on page load.

@@ -22,33 +22,53 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ┌─ Domain Layer ─────────────────────────────────────────────────────┐
 │  Pure functions (no side effects) for trading decisions.            │
 │  • entryGate.js      — 24 entry blockers (risk, time, indicator)   │
-│  • exitEvaluator.js  — 8 exit conditions (rollover, prob flip, etc) │
-│  • sizing.js         — Dynamic trade size calculation              │
+│  • exitEvaluator.js  — 8 exit conditions (rollover, prob flip, etc)│
+│  • sizing.js         — Dynamic trade size (fee-aware) [Phase 3]    │
+│  • killSwitch.js     — Daily loss limit logic [Phase 3]            │
+│  • orderLifecycle.js — Order state machine [Phase 3]               │
+│  • retryPolicy.js    — Error classification + retry [Phase 3]      │
+│  • reconciliation.js — Position reconciliation [Phase 3]           │
+│  • backtester.js     — Pure-function trade replayer [Phase 1]      │
+│  • optimizer.js      — Grid search parameter tuning [Phase 1]      │
 └────────────────────────────────────────────────────────────────────┘
 
 ┌─ Application Layer ────────────────────────────────────────────────┐
 │  Orchestration & state management. No external I/O (except calls   │
 │  to executors and signals).                                         │
 │  • TradingEngine.js      — Main loop orchestrator                   │
-│  • TradingState.js       — MFE/MAE tracking, circuit breaker        │
+│  • TradingState.js       — MFE/MAE, circuit breaker, kill-switch   │
 │  • ModeManager.js        — Paper/Live toggle (not UI-driven)        │
 │  • ExecutorInterface.js  — Abstract executor contract               │
+└────────────────────────────────────────────────────────────────────┘
+
+┌─ Services Layer ──────────────────────────────────────────────────┐
+│  Application services (orchestrate domain + infrastructure).        │
+│  • analyticsService.js    — Trade analytics + period grouping [P1] │
+│  • backtestService.js     — Backtest orchestration [Phase 1]       │
+│  • suggestionService.js   — Threshold suggestions [Phase 2]        │
+│  • statusService.js       — /api/status assembly                   │
 └────────────────────────────────────────────────────────────────────┘
 
 ┌─ Infrastructure Layer ─────────────────────────────────────────────┐
 │  External I/O (API calls, DB, file system, WebSockets).            │
 │  • executors/PaperExecutor.js    — Simulated fills on ledger        │
 │  • executors/LiveExecutor.js     — Real CLOB execution              │
+│  • persistence/tradeStore.js     — SQLite trade store [Phase 4]    │
+│  • webhooks/webhookService.js    — Slack/Discord alerts [Phase 4]  │
+│  • recovery/stateManager.js      — Crash recovery [Phase 4]        │
+│  • deployment/tradingLock.js     — Instance coordination [Phase 4] │
+│  • deployment/gracefulShutdown.js— SIGTERM drain [Phase 4]         │
 │  • polymarket.js                 — Gamma API + CLOB client          │
 │  • kraken.js, chainlink.js, etc  — Price feeds                      │
 │  • ledger.js                     — Paper trading state persistence  │
 └────────────────────────────────────────────────────────────────────┘
 
 ┌─ Presentation Layer ──────────────────────────────────────────────┐
-│  UI & monitoring.                                                   │
-│  • ui/index.html  — Two-column dashboard (status, trades, KPIs)    │
-│  • ui/script.js   — Real-time polling, mode/trading toggles        │
-│  • ui/server.js   — Express routes (/api/status, /api/trades, etc) │
+│  UI & monitoring (3-tab dashboard).                                 │
+│  • ui/index.html    — Dashboard + Analytics + Optimizer tabs       │
+│  • ui/script.js     — Real-time polling, mode/trading toggles      │
+│  • ui/analytics.js  — Analytics/optimizer tab rendering [Phase 1]  │
+│  • ui/server.js     — Express routes (30+ endpoints)               │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -65,8 +85,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Start trading (server + UI on localhost:3000)
 npm start
 
-# Run tests (node:test native runner)
+# Run tests (node:test native runner — unit + integration)
 npm test
+
+# Pre-flight production check (tests + env validation + config sanity)
+npm run preflight
 
 # Environment config
 cp .env.example .env
@@ -91,6 +114,23 @@ cp .env.example .env
 | `src/ui/script.js` | Frontend: 1.5s polling loop, mode dropdown, Start/Stop buttons, instance locking |
 | `src/paper_trading/ledger.js` | Paper trade state (JSON file), entry/exit recording, realized/unrealized PnL |
 | `src/services/statusService.js` | Assembles `/api/status` response: engine state + UI diagnostics |
+| `src/services/analyticsService.js` | Trade analytics with period grouping, segmented views (Phase 1) |
+| `src/services/backtestService.js` | Backtest orchestration with SQLite fallback (Phase 1) |
+| `src/services/suggestionService.js` | Threshold suggestion engine using blocker data (Phase 2) |
+| `src/domain/backtester.js` | Pure-function backtester (no I/O imports) (Phase 1) |
+| `src/domain/optimizer.js` | Grid search optimizer (iterative cartesian product) (Phase 1) |
+| `src/domain/orderLifecycle.js` | Order state machine (SUBMITTED->FILLED->EXITED) (Phase 3) |
+| `src/domain/retryPolicy.js` | Error classification + exponential backoff (Phase 3) |
+| `src/domain/killSwitch.js` | Kill-switch pure functions (Phase 3) |
+| `src/domain/reconciliation.js` | Position reconciliation logic (Phase 3) |
+| `src/infrastructure/persistence/tradeStore.js` | SQLite trade store with migration (Phase 4) |
+| `src/infrastructure/webhooks/webhookService.js` | Webhook alerting (Slack/Discord) (Phase 4) |
+| `src/infrastructure/recovery/stateManager.js` | PID lock + state persistence (Phase 4) |
+| `src/infrastructure/deployment/tradingLock.js` | File-based instance coordination (Phase 4) |
+| `src/infrastructure/deployment/gracefulShutdown.js` | SIGTERM drain handler (Phase 4) |
+| `src/ui/analytics.js` | Analytics/optimizer tab rendering (Phase 1) |
+| `test/integration/` | E2E integration tests (Phase 5) |
+| `scripts/preflight.js` | Production pre-flight checks (Phase 5) |
 
 ## Frontend Architecture (UI)
 

@@ -29,6 +29,92 @@ const host = process.env.HOST || '0.0.0.0';
 function ok(data) { return { success: true, data }; }
 function fail(msg) { return { success: false, error: msg }; }
 
+// ── Trade Store (SQLite) initialization ──────────────────────────────
+let _tradeStoreAvailable = false;
+
+function initTradeStore() {
+  try {
+    const { getTradeStore } = require('../infrastructure/persistence/tradeStore.js');
+    const store = getTradeStore();
+
+    // Expose for global access by backtestService etc
+    globalThis.__tradeStore_getTradeStore = () => store;
+
+    // Migrate from JSON ledger if SQLite is empty
+    const count = store.getTradeCount();
+    if (count === 0) {
+      const ledger = getLedger();
+      if (ledger && Array.isArray(ledger.trades) && ledger.trades.length > 0) {
+        console.log(`[TradeStore] Migrating ${ledger.trades.length} trades from JSON ledger...`);
+        const result = store.migrateFromLedger(ledger, 'paper');
+        console.log(`[TradeStore] Migration: ${result.migrated} migrated, ${result.skipped} skipped`);
+      }
+    } else {
+      console.log(`[TradeStore] SQLite already has ${count} trades`);
+    }
+
+    _tradeStoreAvailable = true;
+    return store;
+  } catch (err) {
+    console.warn('[TradeStore] SQLite not available, using JSON ledger fallback:', err.message);
+    _tradeStoreAvailable = false;
+    return null;
+  }
+}
+
+/**
+ * Lazy dynamic import for ESM compatibility.
+ * Falls back to null if better-sqlite3 not installed.
+ */
+function require(modulePath) {
+  // This is a sync ESM workaround - we pre-load via initTradeStore
+  // and cache the store on globalThis. This function name shadows the
+  // CommonJS require but is only used for the trade store import.
+  if (modulePath.includes('tradeStore')) {
+    // Return a module-like object with the cached store factory
+    if (globalThis.__tradeStore_getTradeStore) {
+      return { getTradeStore: globalThis.__tradeStore_getTradeStore };
+    }
+    throw new Error('TradeStore not initialized');
+  }
+  throw new Error(`require() not available for ${modulePath}`);
+}
+
+/**
+ * Get trades from SQLite (primary) or JSON ledger (fallback).
+ * @returns {Object[]}
+ */
+function getTradesFromStore() {
+  if (_tradeStoreAvailable && globalThis.__tradeStore_getTradeStore) {
+    try {
+      const store = globalThis.__tradeStore_getTradeStore();
+      return store.getAllTrades();
+    } catch {
+      // fallback
+    }
+  }
+  const ledger = getLedger();
+  return Array.isArray(ledger.trades) ? ledger.trades : [];
+}
+
+/**
+ * Sync a new/updated trade to SQLite (fire-and-forget).
+ * Called whenever the JSON ledger is updated so SQLite stays in sync.
+ */
+function syncTradeToStore(trade, mode = 'paper') {
+  if (!_tradeStoreAvailable || !globalThis.__tradeStore_getTradeStore) return;
+  try {
+    const store = globalThis.__tradeStore_getTradeStore();
+    store.insertTrade(trade, mode);
+    store.recalculateSummary();
+  } catch (err) {
+    console.warn('[TradeStore] Sync error:', err.message);
+  }
+}
+
+// Expose syncTradeToStore globally for PaperExecutor to call
+globalThis.__syncTradeToStore = syncTradeToStore;
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -55,8 +141,8 @@ app.get('/api/status', async (req, res) => {
 app.get('/api/trades', async (req, res) => {
   try {
     await initializeLedger();
-    const ledgerData = getLedger();
-    res.json(ok(Array.isArray(ledgerData.trades) ? ledgerData.trades : []));
+    const trades = getTradesFromStore();
+    res.json(ok(trades));
   } catch (error) {
     console.error('Error fetching trades:', error.message);
     res.status(500).json(fail('Failed to fetch trades data.'));
@@ -66,8 +152,8 @@ app.get('/api/trades', async (req, res) => {
 app.get('/api/analytics', async (req, res) => {
   try {
     await initializeLedger();
-    const ledgerData = getLedger();
-    const analytics = computeAnalytics(ledgerData.trades);
+    const trades = getTradesFromStore();
+    const analytics = computeAnalytics(trades);
 
     const rows = readLiquiditySamples({ limit: 20000 });
     const liquidity = {
@@ -304,6 +390,12 @@ app.get('/api/metrics', (req, res) => {
       },
       services: polyService?.getStatus?.() ?? null,
       rateLimiter: rateLimiter?.getStats?.() ?? null,
+      persistence: {
+        sqlite: _tradeStoreAvailable,
+        tradeCount: _tradeStoreAvailable && globalThis.__tradeStore_getTradeStore
+          ? (() => { try { return globalThis.__tradeStore_getTradeStore().getTradeCount(); } catch { return null; } })()
+          : null,
+      },
     }));
   } catch (error) {
     console.error('Error fetching metrics:', error.message);
@@ -387,10 +479,9 @@ app.post('/api/optimizer', async (req, res) => {
     // Generate explicit value arrays from range config
     const paramRanges = generateParamRanges(rangeConfig);
 
-    // Load trades from paper ledger
+    // Load trades from SQLite (primary) or JSON ledger (fallback)
     await initializeLedger();
-    const ledgerData = getLedger();
-    const trades = Array.isArray(ledgerData.trades) ? ledgerData.trades : [];
+    const trades = getTradesFromStore();
 
     // Build base config
     const paperConfig = CONFIG.paperTrading || {};
@@ -553,10 +644,9 @@ app.get('/api/suggestions', async (req, res) => {
       }));
     }
 
-    // Load trades
+    // Load trades from store
     await initializeLedger();
-    const ledgerData = getLedger();
-    const trades = Array.isArray(ledgerData.trades) ? ledgerData.trades : [];
+    const trades = getTradesFromStore();
     const closedCount = trades.filter(t => t && t.status === 'CLOSED').length;
 
     // Build config objects
@@ -636,8 +726,7 @@ app.post('/api/suggestions/apply', async (req, res) => {
 
     // Record tracking data
     await initializeLedger();
-    const ledgerData = getLedger();
-    const trades = Array.isArray(ledgerData.trades) ? ledgerData.trades : [];
+    const trades = getTradesFromStore();
     const closedCount = trades.filter(t => t && t.status === 'CLOSED').length;
 
     globalThis.__appliedSuggestions.push({
@@ -667,8 +756,7 @@ app.get('/api/suggestions/tracking', async (req, res) => {
     }
 
     await initializeLedger();
-    const ledgerData = getLedger();
-    const allTrades = Array.isArray(ledgerData.trades) ? ledgerData.trades : [];
+    const allTrades = getTradesFromStore();
 
     const tracking = applied.map(entry => {
       // Find trades closed after apply time
@@ -839,8 +927,24 @@ app.post('/api/mode', (req, res) => {
   }
 });
 
+// ─── Health endpoint (Phase 4: INFRA-08) ──────────────────────────
+
 app.get('/health', (req, res) => {
-  res.json(ok({ status: 'ok', timestamp: new Date().toISOString() }));
+  const engine = globalThis.__tradingEngine;
+  const uptime = process.uptime();
+  const memMb = Math.round(process.memoryUsage().heapUsed / 1024 / 1024 * 100) / 100;
+
+  res.json(ok({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptime: Math.round(uptime),
+    lastTick: globalThis.__uiStatus?.lastUpdate ?? null,
+    mode: engine?.executor?.getMode?.() ?? 'unknown',
+    tradingEnabled: engine?.tradingEnabled ?? false,
+    memoryMb: memMb,
+    pid: process.pid,
+    persistence: { sqlite: _tradeStoreAvailable },
+  }));
 });
 
 app.get('/', (req, res) => {
@@ -850,6 +954,9 @@ app.get('/', (req, res) => {
 export function startUIServer() {
   initializeLedger().catch((e) => console.error('UI server (paper) ledger init failed:', e.message));
   initializeLiveLedger().catch((e) => console.error('UI server (live) ledger init failed:', e.message));
+
+  // Initialize SQLite trade store and migrate JSON data
+  initTradeStore();
 
   console.log(`Starting UI server on ${host}:${port}...`);
   const server = app.listen(port, host, () => {

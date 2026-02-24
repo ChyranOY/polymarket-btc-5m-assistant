@@ -18,23 +18,23 @@ Requirements for next development cycle. Each maps to roadmap phases.
 
 - [x] **PROF-01**: System provides a backtest harness that replays historical trades with modified parameters
 - [x] **PROF-02**: System can test parameter combinations (thresholds, filters) and report expected win rate/PF
-- [ ] **PROF-03**: User can view win rate and profit factor segmented by entry phase, time of day, and market conditions
-- [ ] **PROF-04**: System suggests entry filter adjustments based on blocker diagnostics frequency data
+- [x] **PROF-03**: User can view win rate and profit factor segmented by entry phase, time of day, and market conditions
+- [x] **PROF-04**: System suggests entry filter adjustments based on blocker diagnostics frequency data
 
 ### Live Trading Readiness
 
-- [ ] **LIVE-01**: Full order lifecycle tracked from submission through fill to exit with status at each stage
-- [ ] **LIVE-02**: System reconciles CLOB position state with local tracking and flags discrepancies
-- [ ] **LIVE-03**: Position sizing accounts for estimated fees before submitting orders
-- [ ] **LIVE-04**: CLOB failures trigger automatic retry with exponential backoff and alert
-- [ ] **LIVE-05**: Daily PnL kill-switch is validated end-to-end (triggers correctly at threshold)
+- [x] **LIVE-01**: Full order lifecycle tracked from submission through fill to exit with status at each stage
+- [x] **LIVE-02**: System reconciles CLOB position state with local tracking and flags discrepancies
+- [x] **LIVE-03**: Position sizing accounts for estimated fees before submitting orders
+- [x] **LIVE-04**: CLOB failures trigger automatic retry with exponential backoff and alert
+- [x] **LIVE-05**: Daily PnL kill-switch is validated end-to-end (triggers correctly at threshold)
 
 ### Infrastructure Reliability
 
-- [ ] **INFRA-05**: System sends webhook alerts (Slack/Discord) on critical events (crash, circuit breaker, kill-switch)
-- [ ] **INFRA-06**: System auto-restarts after crash and recovers in-memory state from persisted data
-- [ ] **INFRA-07**: Trade history persisted in structured format (SQLite or append-only log) beyond JSON ledger
-- [ ] **INFRA-08**: Deployment supports zero-downtime updates with instance coordination
+- [x] **INFRA-05**: System sends webhook alerts (Slack/Discord) on critical events (crash, circuit breaker, kill-switch)
+- [x] **INFRA-06**: System auto-restarts after crash and recovers in-memory state from persisted data
+- [x] **INFRA-07**: Trade history persisted in structured format (SQLite or append-only log) beyond JSON ledger
+- [x] **INFRA-08**: Deployment supports zero-downtime updates with instance coordination
 
 ## v2 Requirements
 
@@ -75,17 +75,17 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ANLYT-04 | Phase 1 | Complete |
 | PROF-01 | Phase 1 | Complete |
 | PROF-02 | Phase 1 | Complete |
-| PROF-03 | Phase 2 | Pending |
-| PROF-04 | Phase 2 | Pending |
-| LIVE-01 | Phase 3 | Pending |
-| LIVE-02 | Phase 3 | Pending |
-| LIVE-03 | Phase 3 | Pending |
-| LIVE-04 | Phase 3 | Pending |
-| LIVE-05 | Phase 3 | Pending |
-| INFRA-05 | Phase 4 | Pending |
-| INFRA-06 | Phase 4 | Pending |
-| INFRA-07 | Phase 4 | Pending |
-| INFRA-08 | Phase 4 | Pending |
+| PROF-03 | Phase 2 | Complete |
+| PROF-04 | Phase 2 | Complete |
+| LIVE-01 | Phase 3 | Complete |
+| LIVE-02 | Phase 3 | Complete |
+| LIVE-03 | Phase 3 | Complete |
+| LIVE-04 | Phase 3 | Complete |
+| LIVE-05 | Phase 3 | Complete |
+| INFRA-05 | Phase 4 | Complete |
+| INFRA-06 | Phase 4 | Complete |
+| INFRA-07 | Phase 4 | Complete |
+| INFRA-08 | Phase 4 | Complete |
 
 **Coverage:**
 - v1 requirements: 17 total
@@ -94,4 +94,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-02-23*
-*Last updated: 2026-02-23 after GSD project initialization*
+*Last updated: 2026-02-23 after Phase 5 completion — all 17 v1 requirements complete*
