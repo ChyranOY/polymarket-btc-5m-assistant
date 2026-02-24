@@ -547,6 +547,7 @@ document.addEventListener('DOMContentLoaded', () => {
           : 'N/A';
 
         const entryDbg = statusData.entryDebug || null;
+        const hasOpenTrade = Boolean(statusData.openTrade);
         // If the local pill says ACTIVE, filter out the stale "Trading disabled"
         // blocker that can arrive from a server instance that never received the
         // Start command (seeking timeout, instance restart, load-balancer split).
@@ -561,9 +562,18 @@ document.addEventListener('DOMContentLoaded', () => {
           if (locallyActive) {
             blockers = blockers.filter(b => !/trading disabled/i.test(b));
           }
-          entryReason = blockers.length
-            ? blockers.join('; ')
-            : 'ELIGIBLE (will enter if Rec=ENTER + thresholds hit)';
+          // "Trade already open" is not a useful blocker — the open trade panel
+          // already shows position details. Hide it from the entry reason display.
+          if (hasOpenTrade) {
+            blockers = blockers.filter(b => !/trade already open|position open/i.test(b));
+          }
+          if (blockers.length === 0 && hasOpenTrade) {
+            entryReason = 'Monitoring open position';
+          } else {
+            entryReason = blockers.length
+              ? blockers.join('; ')
+              : 'ELIGIBLE (will enter if Rec=ENTER + thresholds hit)';
+          }
         } else {
           entryReason = 'Not eligible';
         }
@@ -579,6 +589,24 @@ document.addEventListener('DOMContentLoaded', () => {
           ['Candles (1m)', String(cc)],
           ['Why no entry?', entryReason]
         ];
+
+        // Entry thresholds (from server config)
+        const thr = statusData.entryThresholds;
+        if (thr) {
+          const pct  = v => v != null ? `${(v * 100).toFixed(0)}%` : '—';
+          const pct1 = v => v != null ? `${(v * 100).toFixed(1)}%` : '—';
+          const c    = v => v != null ? `${(v * 100).toFixed(2)}¢` : '—';
+          const usd  = v => v != null ? `$${v}` : '—';
+          const wknd = thr.weekendProbBoost > 0
+            ? ` <span class="threshold-wknd">(wknd +${pct(thr.weekendProbBoost)}p / +${pct1(thr.weekendEdgeBoost)}e)</span>`
+            : '';
+          rows.push(['Prob E/M/L',  `${pct(thr.minProbEarly)} / ${pct(thr.minProbMid)} / ${pct(thr.minProbLate)}${wknd}`]);
+          rows.push(['Edge E/M/L',  `${pct1(thr.edgeEarly)} / ${pct1(thr.edgeMid)} / ${pct1(thr.edgeLate)}`]);
+          rows.push(['Spread / Liq', `spread ≤${c(thr.maxSpread)} (wknd ≤${c(thr.weekendMaxSpread)}) · liq ≥${usd(thr.minLiquidity)} (wknd ≥$${(thr.weekendMinLiquidity ?? 0).toLocaleString()})`]);
+          rows.push(['Conviction',   `model max ≥${pct(thr.minModelMaxProb)} (wknd ≥${pct(thr.weekendMinModelMaxProb)}) · entry ≤${c(thr.maxEntryPolyPrice)}`]);
+          rows.push(['Filters',      `RSI skip ${thr.noTradeRsiMin}–${thr.noTradeRsiMax} · range ≥${(thr.minRangePct20 * 100).toFixed(2)}% · impulse ≥${(thr.minBtcImpulsePct1m * 100).toFixed(3)}% · no entry <${thr.noEntryFinalMinutes}m`]);
+          rows.push(['Guardrails',   `circuit ${thr.circuitBreakerConsecutiveLosses} losses · daily loss ${usd(thr.maxDailyLossUsd)} · cooldown L${thr.lossCooldownSeconds}s / W${thr.winCooldownSeconds}s`]);
+        }
 
         // Blocker frequency summary (if available)
         const bSum = statusData.blockerSummary;

@@ -82,6 +82,38 @@ export async function assembleStatus() {
       fees: engine?.executor?.feeService?.getSnapshot?.() ?? null,
       approvals: engine?.executor?.approvalService?.getStatus?.() ?? null,
     },
+    entryThresholds: {
+      // Prob thresholds (MID includes midProbBoost)
+      minProbEarly: CONFIG.paperTrading.minProbEarly ?? 0.52,
+      minProbMid: (CONFIG.paperTrading.minProbMid ?? 0.53) + (CONFIG.paperTrading.midProbBoost ?? 0.01),
+      minProbLate: CONFIG.paperTrading.minProbLate ?? 0.55,
+      // Edge thresholds (MID includes midEdgeBoost)
+      edgeEarly: CONFIG.paperTrading.edgeEarly ?? 0.02,
+      edgeMid: (CONFIG.paperTrading.edgeMid ?? 0.03) + (CONFIG.paperTrading.midEdgeBoost ?? 0.01),
+      edgeLate: CONFIG.paperTrading.edgeLate ?? 0.05,
+      // Weekend tightening boosts
+      weekendProbBoost: CONFIG.paperTrading.weekendProbBoost ?? 0.03,
+      weekendEdgeBoost: CONFIG.paperTrading.weekendEdgeBoost ?? 0.03,
+      // Market quality
+      maxSpread: CONFIG.paperTrading.maxSpread ?? 0.012,
+      weekendMaxSpread: CONFIG.paperTrading.weekendMaxSpread ?? 0.008,
+      minLiquidity: CONFIG.paperTrading.minLiquidity ?? 500,
+      weekendMinLiquidity: CONFIG.paperTrading.weekendMinLiquidity ?? 20000,
+      minModelMaxProb: CONFIG.paperTrading.minModelMaxProb ?? 0.53,
+      weekendMinModelMaxProb: CONFIG.paperTrading.weekendMinModelMaxProb ?? 0.6,
+      // Filters
+      minRangePct20: CONFIG.paperTrading.minRangePct20 ?? 0.0012,
+      minBtcImpulsePct1m: CONFIG.paperTrading.minBtcImpulsePct1m ?? 0.0003,
+      noTradeRsiMin: CONFIG.paperTrading.noTradeRsiMin ?? 30,
+      noTradeRsiMax: CONFIG.paperTrading.noTradeRsiMax ?? 45,
+      maxEntryPolyPrice: CONFIG.paperTrading.maxEntryPolyPrice ?? 0.0055,
+      // Guardrails
+      circuitBreakerConsecutiveLosses: CONFIG.paperTrading.circuitBreakerConsecutiveLosses ?? 5,
+      maxDailyLossUsd: CONFIG.paperTrading.maxDailyLossUsd ?? 50,
+      lossCooldownSeconds: CONFIG.paperTrading.lossCooldownSeconds ?? 30,
+      winCooldownSeconds: CONFIG.paperTrading.winCooldownSeconds ?? 30,
+      noEntryFinalMinutes: CONFIG.paperTrading.noEntryFinalMinutes ?? 1.5,
+    },
     killSwitch: engine?.state?.getKillSwitchStatus?.(
       engine?.config?.maxDailyLossUsd ?? CONFIG.liveTrading?.maxDailyLossUsd ?? CONFIG.paperTrading?.maxDailyLossUsd ?? null,
     ) ?? null,

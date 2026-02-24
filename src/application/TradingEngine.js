@@ -176,7 +176,7 @@ export class TradingEngine {
 
     if (positions.length > 0) {
       this.state.hasOpenPosition = true;
-      this.state.setEntryStatus(false, [`Position open: ${positions.length}`]);
+      this.state.setEntryStatus(false, ['Trade already open']);
       this.lastEntryStatus = this.state.lastEntryStatus;
       return;
     }
