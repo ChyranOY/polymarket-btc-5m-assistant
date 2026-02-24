@@ -484,7 +484,7 @@ document.addEventListener('DOMContentLoaded', () => {
     edgeMid: { min: 0.01, max: 0.06, step: 0.01 },
     noTradeRsiMin: { min: 25, max: 40, step: 5 },
     noTradeRsiMax: { min: 40, max: 55, step: 5 },
-    maxEntryPolyPrice: { min: 0.004, max: 0.008, step: 0.001 },
+    maxEntryPolyPrice: { min: 0.45, max: 0.70, step: 0.05 },
   };
 
   const PARAM_LABELS = {

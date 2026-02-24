@@ -2,6 +2,20 @@
 
 All notable changes to Polymarket BTC 5m Assistant are documented in this file.
 
+## [1.0.2] - 2026-02-24
+
+### Fixed
+
+- **Polymarket prices divided by 100 (critical)**: CLOB `/price` and Gamma API both return decimal prices (0–1 range, e.g. 0.56 = 56¢), but `polyPrices` in `index.js` divided by 100 again producing 0.0056. This cascaded through `entryGate.js` (effectivePolyPrices), `TradingEngine.js` (entry price resolution), and `PaperExecutor.js` (mark-to-market) — causing incorrect unrealized PnL, wrong "Current" price display (0.5600¢ instead of 56.00¢), and entry prices submitted at 1/100th of market value. Removed all erroneous `/100` divisions and `*100` conversions on price values (display-only `*100` for ¢ formatting preserved).
+- **Config thresholds calibrated to buggy scale**: `maxEntryPolyPrice` default was `0.0055` (matching the old 0.005 price bug), blocking every single trade since correct prices (0.56) far exceed 0.0055. Updated all price-related thresholds to proper decimal scale: `maxEntryPolyPrice` 0.0055→0.65, `minPolyPrice` 0.002→0.05, `maxPolyPrice` 0.98→0.95, `minOppositePolyPrice` 0.002→0.10. Also fixed stale fallbacks in `statusService.js` and `ui/server.js`, and optimizer search ranges in `optimizer.js` and `analytics.js`.
+- **Dashboard data flashing/disappearing**: With 2 DO instances behind a load balancer, polls alternating between instances caused the trades table, equity curve, and PnL to flash. Root cause: (1) instance locking returned early from the entire fetch function, preventing trades from being fetched; (2) catch blocks on fetch errors cleared the UI with error messages, replacing cached data. Fixed by skipping the entire poll cycle on foreign instance detection (preserving all cached data) and only showing error messages on first load when no cache exists.
+- **Paper trading ledger not persisting on DigitalOcean**: The JSON ledger wrote to `./paper_trading/trades.json` on the ephemeral filesystem, wiped on every redeploy. Now uses `$DATA_DIR/paper_ledger.json` when `DATA_DIR` is set (persistent volume), falling back to the local path for development.
+
+### Changed
+
+- **Optimizer grid search ranges**: Updated `maxEntryPolyPrice` search range from 0.004–0.008 to 0.45–0.70 to match corrected decimal price scale.
+- **Test signals**: Updated `paperE2E.test.js` to use realistic decimal prices (0.56/0.44 instead of 0.004/0.996), added missing `vwapNow` indicator, and fixed analytics assertion field names (`closedTrades`/`totalPnL`).
+
 ## [1.0.1] - 2026-02-24
 
 ### Fixed

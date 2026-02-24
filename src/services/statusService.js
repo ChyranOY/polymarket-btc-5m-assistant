@@ -114,7 +114,7 @@ export async function assembleStatus() {
       minBtcImpulsePct1m: CONFIG.paperTrading.minBtcImpulsePct1m ?? 0.0003,
       noTradeRsiMin: CONFIG.paperTrading.noTradeRsiMin ?? 30,
       noTradeRsiMax: CONFIG.paperTrading.noTradeRsiMax ?? 45,
-      maxEntryPolyPrice: CONFIG.paperTrading.maxEntryPolyPrice ?? 0.0055,
+      maxEntryPolyPrice: CONFIG.paperTrading.maxEntryPolyPrice ?? 0.65,
       // Guardrails
       circuitBreakerConsecutiveLosses: CONFIG.paperTrading.circuitBreakerConsecutiveLosses ?? 5,
       maxDailyLossUsd: CONFIG.paperTrading.maxDailyLossUsd ?? 50,

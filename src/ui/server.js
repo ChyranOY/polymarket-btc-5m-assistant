@@ -420,7 +420,7 @@ app.get('/api/diagnostics', (req, res) => {
         minRangePct20: weekendTightening
           ? (config.weekendMinRangePct20 ?? config.minRangePct20 ?? 0.0012)
           : (config.minRangePct20 ?? 0.0012),
-        maxEntryPolyPrice: config.maxEntryPolyPrice ?? 0.0055,
+        maxEntryPolyPrice: config.maxEntryPolyPrice ?? 0.65,
         minBtcImpulsePct1m: config.minBtcImpulsePct1m ?? 0.0003,
         noTradeRsiRange: [config.noTradeRsiMin ?? 30, config.noTradeRsiMax ?? 45],
         minCandlesForEntry: config.minCandlesForEntry ?? 12,
