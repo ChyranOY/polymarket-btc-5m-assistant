@@ -59,6 +59,12 @@ Plans:
 - PROF-03: Win rate and profit factor segmented by entry phase, time of day, and market conditions
 - PROF-04: Entry filter adjustments suggested based on blocker diagnostics frequency data
 
+**Plans:** 2 plans
+
+Plans:
+- [x] 02-01-PLAN.md -- Segmented performance views (profitFactor + byMarketRegime + 3-tab UI)
+- [x] 02-02-PLAN.md -- Suggestion engine (blocker-to-threshold mapping + backtest validation + suggestion cards UI)
+
 **Success Criteria:**
 1. Dashboard shows win rate and profit factor broken down by entry phase, hour of day, and market regime
 2. System analyzes blocker diagnostics data and suggests which thresholds to relax or tighten
@@ -97,6 +103,14 @@ Plans:
 - CLOB API rate limits may conflict with retry logic
 - Fee estimation accuracy depends on current Polymarket fee structure
 - Kill-switch testing requires simulating loss scenarios
+
+**Plans:** 4 plans
+
+Plans:
+- [ ] 03-01-PLAN.md -- Order lifecycle state machine + retry policy (TDD)
+- [ ] 03-02-PLAN.md -- Fee-aware sizing + kill-switch hardening (TDD)
+- [ ] 03-03-PLAN.md -- Position reconciliation + sync status
+- [ ] 03-04-PLAN.md -- Dashboard lifecycle UI + kill-switch controls + fee-aware sizing integration
 
 **Dependencies:** None (builds on existing LiveExecutor, but can be developed independently)
 
@@ -168,4 +182,4 @@ Phase 5 depends on all prior phases.
 
 ---
 *Roadmap created: 2026-02-23*
-*Last updated: 2026-02-23 after Phase 1 planning*
+*Last updated: 2026-02-23 after Phase 2 completion*

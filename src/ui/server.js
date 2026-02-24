@@ -16,6 +16,7 @@ import { fetchLiveTrades, fetchLiveOpenOrders, fetchLivePositions, fetchLiveAnal
 import { TradingState } from '../application/TradingState.js';
 import { CONFIG } from '../config.js';
 import { getPacificTimeInfo } from '../domain/entryGate.js';
+import { generateSuggestions } from '../services/suggestionService.js';
 
 import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
@@ -525,6 +526,242 @@ app.get('/api/config/current', (req, res) => {
   } catch (error) {
     console.error('Error fetching current config:', error.message);
     res.status(500).json(fail('Failed to fetch current config.'));
+  }
+});
+
+// ─── Suggestion endpoints ─────────────────────────────────────────
+
+// Track suggestion state
+globalThis.__lastSuggestionTradeCount = 0;
+globalThis.__appliedSuggestions = [];
+
+app.get('/api/suggestions', async (req, res) => {
+  try {
+    const engine = globalThis.__tradingEngine;
+    if (!engine) return res.status(503).json(fail('Engine not initialized'));
+
+    const state = engine.state;
+    const summary = state?.getBlockerSummary?.(25) ?? { total: 0, topBlockers: [] };
+
+    // Guard: need enough blocker data
+    if (summary.total < 100) {
+      return res.json(ok({
+        suggestions: [],
+        insufficient: true,
+        message: 'Need more blocker data (at least 100 entry checks)',
+        totalEntryChecks: summary.total,
+      }));
+    }
+
+    // Load trades
+    await initializeLedger();
+    const ledgerData = getLedger();
+    const trades = Array.isArray(ledgerData.trades) ? ledgerData.trades : [];
+    const closedCount = trades.filter(t => t && t.status === 'CLOSED').length;
+
+    // Build config objects
+    const config = engine.config || {};
+    const paperConfig = CONFIG.paperTrading || {};
+    const currentConfig = {
+      minProbMid: config.minProbMid ?? paperConfig.minProbMid,
+      edgeMid: config.edgeMid ?? paperConfig.edgeMid,
+      noTradeRsiMin: config.noTradeRsiMin ?? paperConfig.noTradeRsiMin,
+      noTradeRsiMax: config.noTradeRsiMax ?? paperConfig.noTradeRsiMax,
+      maxEntryPolyPrice: config.maxEntryPolyPrice ?? paperConfig.maxEntryPolyPrice,
+      minLiquidity: config.minLiquidity ?? paperConfig.minLiquidity,
+      maxSpreadThreshold: config.maxSpread ?? paperConfig.maxSpread,
+      minSpotImpulse: config.minBtcImpulsePct1m ?? paperConfig.minBtcImpulsePct1m,
+      minRangePct20: config.minRangePct20 ?? paperConfig.minRangePct20,
+      minModelMaxProb: config.minModelMaxProb ?? paperConfig.minModelMaxProb,
+    };
+
+    const baseConfig = {
+      minProbMid: paperConfig.minProbMid,
+      edgeMid: paperConfig.edgeMid,
+      noTradeRsiMin: paperConfig.noTradeRsiMin,
+      noTradeRsiMax: paperConfig.noTradeRsiMax,
+      maxSpreadThreshold: paperConfig.maxSpread,
+      minLiquidity: paperConfig.minLiquidity,
+      minSpotImpulse: paperConfig.minBtcImpulsePct1m,
+      maxEntryPolyPrice: paperConfig.maxEntryPolyPrice,
+    };
+
+    const suggestions = generateSuggestions(trades, summary, currentConfig, baseConfig);
+
+    const tradesSinceLastAnalysis = closedCount - globalThis.__lastSuggestionTradeCount;
+    globalThis.__lastSuggestionTradeCount = closedCount;
+
+    res.json(ok({
+      suggestions,
+      tradesSinceLastAnalysis,
+      totalEntryChecks: summary.total,
+      closedTradeCount: closedCount,
+    }));
+  } catch (error) {
+    console.error('Error generating suggestions:', error.message);
+    res.status(500).json(fail('Failed to generate suggestions.'));
+  }
+});
+
+app.post('/api/suggestions/apply', async (req, res) => {
+  try {
+    const engine = globalThis.__tradingEngine;
+    if (!engine) return res.status(503).json(fail('Engine not initialized'));
+
+    const { configKey, suggestedValue, projected } = req.body || {};
+
+    if (!configKey || typeof configKey !== 'string') {
+      return res.status(400).json(fail('configKey is required'));
+    }
+    if (typeof suggestedValue !== 'number' || !Number.isFinite(suggestedValue)) {
+      return res.status(400).json(fail('suggestedValue must be a finite number'));
+    }
+
+    // Apply the config change (same pattern as POST /api/config)
+    const previousConfig = {};
+    for (const key of OPTIMIZER_ALLOWED_KEYS) {
+      if (engine.config && key in engine.config) {
+        previousConfig[key] = engine.config[key];
+      }
+    }
+    globalThis.__previousConfig = previousConfig;
+
+    // Map suggestion configKey to engine config key (some differ)
+    const engineKeyMap = {
+      maxSpreadThreshold: 'maxSpread',
+      minSpotImpulse: 'minBtcImpulsePct1m',
+    };
+    const engineKey = engineKeyMap[configKey] || configKey;
+    engine.config[engineKey] = suggestedValue;
+
+    // Record tracking data
+    await initializeLedger();
+    const ledgerData = getLedger();
+    const trades = Array.isArray(ledgerData.trades) ? ledgerData.trades : [];
+    const closedCount = trades.filter(t => t && t.status === 'CLOSED').length;
+
+    globalThis.__appliedSuggestions.push({
+      configKey,
+      suggestedValue,
+      projectedWR: projected?.winRate ?? null,
+      projectedPF: projected?.profitFactor ?? null,
+      appliedAt: Date.now(),
+      tradeCountAtApply: closedCount,
+    });
+
+    res.json(ok({
+      applied: { [configKey]: suggestedValue },
+      revertAvailable: true,
+    }));
+  } catch (error) {
+    console.error('Error applying suggestion:', error.message);
+    res.status(500).json(fail('Failed to apply suggestion.'));
+  }
+});
+
+app.get('/api/suggestions/tracking', async (req, res) => {
+  try {
+    const applied = globalThis.__appliedSuggestions || [];
+    if (applied.length === 0) {
+      return res.json(ok({ tracking: [] }));
+    }
+
+    await initializeLedger();
+    const ledgerData = getLedger();
+    const allTrades = Array.isArray(ledgerData.trades) ? ledgerData.trades : [];
+
+    const tracking = applied.map(entry => {
+      // Find trades closed after apply time
+      const tradesAfter = allTrades.filter(t => {
+        if (!t || t.status !== 'CLOSED' || !t.exitTime) return false;
+        const exitMs = new Date(t.exitTime).getTime();
+        return exitMs > entry.appliedAt;
+      });
+
+      const tradesSinceApply = tradesAfter.length;
+      let actualWR = null;
+      let actualPF = null;
+
+      if (tradesSinceApply > 0) {
+        const wins = tradesAfter.filter(t => typeof t.pnl === 'number' && t.pnl > 0);
+        const losses = tradesAfter.filter(t => typeof t.pnl === 'number' && t.pnl < 0);
+        actualWR = wins.length / tradesSinceApply;
+        const winSum = wins.reduce((s, t) => s + (t.pnl || 0), 0);
+        const lossSum = losses.reduce((s, t) => s + Math.abs(t.pnl || 0), 0);
+        actualPF = lossSum > 0 ? winSum / lossSum : null;
+      }
+
+      const isUnderperforming = (
+        entry.projectedPF != null && actualPF != null &&
+        actualPF < entry.projectedPF * 0.7
+      );
+
+      return {
+        configKey: entry.configKey,
+        suggestedValue: entry.suggestedValue,
+        appliedAt: entry.appliedAt,
+        projected: {
+          winRate: entry.projectedWR,
+          profitFactor: entry.projectedPF,
+        },
+        actual: {
+          winRate: actualWR,
+          profitFactor: actualPF,
+        },
+        tradesSinceApply,
+        status: isUnderperforming ? 'underperforming' : 'on_track',
+      };
+    });
+
+    res.json(ok({ tracking }));
+  } catch (error) {
+    console.error('Error fetching suggestion tracking:', error.message);
+    res.status(500).json(fail('Failed to fetch suggestion tracking.'));
+  }
+});
+
+// ─── Kill-switch endpoints (Phase 3) ──────────────────────────────
+
+app.get('/api/kill-switch/status', (req, res) => {
+  try {
+    const engine = globalThis.__tradingEngine;
+    if (!engine) return res.status(503).json(fail('Engine not initialized'));
+
+    const config = engine.config || {};
+    const maxDailyLossUsd = config.maxDailyLossUsd ?? CONFIG.liveTrading?.maxDailyLossUsd ?? null;
+    const status = engine.state?.getKillSwitchStatus?.(maxDailyLossUsd) ?? {
+      active: false,
+      overrideActive: false,
+      overrideCount: 0,
+      todayPnl: engine.state?.todayRealizedPnl ?? 0,
+      limit: maxDailyLossUsd,
+    };
+
+    res.json(ok(status));
+  } catch (error) {
+    console.error('Error fetching kill-switch status:', error.message);
+    res.status(500).json(fail('Failed to fetch kill-switch status.'));
+  }
+});
+
+app.post('/api/kill-switch/override', (req, res) => {
+  try {
+    const engine = globalThis.__tradingEngine;
+    if (!engine) return res.status(503).json(fail('Engine not initialized'));
+
+    if (!engine.state?.overrideKillSwitch) {
+      return res.status(503).json(fail('Kill-switch override not available'));
+    }
+
+    const result = engine.state.overrideKillSwitch();
+    res.json(ok({
+      overridden: true,
+      overrideCount: result.overrideCount,
+      note: 'Kill-switch overridden. Trading resumed with 10% additional loss buffer. Will re-trigger if losses continue.',
+    }));
+  } catch (error) {
+    console.error('Error overriding kill-switch:', error.message);
+    res.status(500).json(fail('Failed to override kill-switch.'));
   }
 });
 

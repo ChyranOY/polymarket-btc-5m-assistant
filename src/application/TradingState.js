@@ -6,9 +6,22 @@
  * via the `state` parameter they receive.
  *
  * One TradingState instance per TradingEngine (recreated on mode switch).
+ *
+ * Phase 3 additions:
+ *   - Kill-switch state management (createKillSwitchState, checkKillSwitch, etc.)
+ *   - shouldResetKillSwitch/resetKillSwitch integrated into resetDayIfNeeded()
+ *   - Override method + status getter for API consumption
  */
 
 /** @import { GraceState } from '../domain/types.js' */
+
+import {
+  createKillSwitchState,
+  checkKillSwitch,
+  overrideKillSwitch as domainOverrideKillSwitch,
+  shouldResetKillSwitch,
+  resetKillSwitch,
+} from '../domain/killSwitch.js';
 
 export class TradingState {
   constructor() {
@@ -31,10 +44,10 @@ export class TradingState {
     this.hasOpenPosition = false;
 
     // ── Per-position MFE/MAE tracking ───────────────────────────
-    /** @type {Map<string, number>} positionId → max unrealized PnL */
+    /** @type {Map<string, number>} positionId -> max unrealized PnL */
     this._mfeByPos = new Map();
 
-    /** @type {Map<string, number>} positionId → min unrealized PnL */
+    /** @type {Map<string, number>} positionId -> min unrealized PnL */
     this._maeByPos = new Map();
 
     // ── Max-loss grace window (per position) ────────────────────
@@ -56,6 +69,10 @@ export class TradingState {
     /** @type {string|null} YYYY-MM-DD key for midnight reset */
     this._todayKey = null;
 
+    // ── Kill-switch state (Phase 3) ──────────────────────────────
+    /** @type {Object} managed by domain killSwitch.js functions */
+    this.killSwitchState = createKillSwitchState();
+
     // ── Circuit breaker (consecutive losses) ─────────────────────
     /** @type {number} */
     this.consecutiveLosses = 0;
@@ -64,7 +81,7 @@ export class TradingState {
     this.circuitBreakerTrippedAtMs = null;
 
     // ── Blocker frequency tracking (for diagnostics) ──────────────
-    /** @type {Map<string, number>} normalized blocker key → count */
+    /** @type {Map<string, number>} normalized blocker key -> count */
     this._blockerCounts = new Map();
 
     /** @type {number} total ticks where entry was evaluated */
@@ -212,18 +229,26 @@ export class TradingState {
   // ─── Daily PnL ──────────────────────────────────────────────
 
   /**
-   * Reset daily counter at midnight PT (best-effort).
+   * Reset daily counter at midnight PT.
+   * Also resets the kill-switch if a new day has started (via domain module).
    */
   resetDayIfNeeded() {
-    const d = new Date();
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    const key = `${y}-${m}-${day}`;
+    const now = new Date();
 
+    // Use the domain kill-switch module for midnight PT detection
+    if (shouldResetKillSwitch(this.killSwitchState, now)) {
+      this.killSwitchState = resetKillSwitch(this.killSwitchState, now);
+      this.todayRealizedPnl = 0;
+      console.log('[TradingState] New day (PT) — daily PnL + kill-switch reset');
+    }
+
+    // Legacy _todayKey update for backward compat
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const key = `${y}-${m}-${day}`;
     if (this._todayKey !== key) {
       this._todayKey = key;
-      this.todayRealizedPnl = 0;
     }
   }
 
@@ -235,6 +260,52 @@ export class TradingState {
     if (Number.isFinite(pnl)) {
       this.todayRealizedPnl += pnl;
     }
+  }
+
+  // ─── Kill-switch (Phase 3) ─────────────────────────────────────
+
+  /**
+   * Check if the kill-switch should be triggered.
+   * @param {number} maxDailyLossUsd
+   * @param {Object} [opts] - { overrideBufferPct }
+   * @returns {{ triggered: boolean, reason?: string, overridden?: boolean }}
+   */
+  checkKillSwitch(maxDailyLossUsd, opts = {}) {
+    return checkKillSwitch(this.killSwitchState, this.todayRealizedPnl, maxDailyLossUsd, opts);
+  }
+
+  /**
+   * Override the kill-switch (allows continued trading with 10% buffer).
+   * @returns {{ overrideCount: number }}
+   */
+  overrideKillSwitch() {
+    this.killSwitchState = domainOverrideKillSwitch(this.killSwitchState);
+    console.warn(
+      `[TradingState] Kill-switch OVERRIDDEN (count: ${this.killSwitchState.overrideCount}). ` +
+      `Trading resumed with 10% additional loss buffer.`,
+    );
+    return { overrideCount: this.killSwitchState.overrideCount };
+  }
+
+  /**
+   * Get kill-switch status for API/UI consumption.
+   * @param {number} [maxDailyLossUsd]
+   * @returns {Object}
+   */
+  getKillSwitchStatus(maxDailyLossUsd) {
+    const check = maxDailyLossUsd != null
+      ? checkKillSwitch(this.killSwitchState, this.todayRealizedPnl, maxDailyLossUsd)
+      : { triggered: false };
+
+    return {
+      active: this.killSwitchState.active || check.triggered,
+      overrideActive: this.killSwitchState.overrideActive,
+      overrideCount: this.killSwitchState.overrideCount,
+      todayPnl: this.todayRealizedPnl,
+      limit: maxDailyLossUsd ?? null,
+      lastResetDate: this.killSwitchState.lastResetDate,
+      overrideLog: this.killSwitchState.overrideLog,
+    };
   }
 
   // ─── Entry status (for UI) ───────────────────────────────────

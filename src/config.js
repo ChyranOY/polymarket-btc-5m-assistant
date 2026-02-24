@@ -141,6 +141,13 @@ export const CONFIG = {
     // Cooldown after a winning trade (seconds): reduces bursty trade patterns (safer for live).
     winCooldownSeconds: Number(process.env.WIN_COOLDOWN_SECONDS) || 30,
 
+    // Daily loss limit: kill-switch threshold (applies to BOTH paper and live modes)
+    // Alias: DAILY_LOSS_LIMIT overrides LIVE_MAX_DAILY_LOSS_USD for unified behavior
+    maxDailyLossUsd: Number(process.env.DAILY_LOSS_LIMIT || process.env.MAX_DAILY_LOSS_USD) || 50,
+
+    // Kill-switch override buffer: 10% additional loss allowed after override
+    killSwitchOverrideBufferPct: Number(process.env.KILL_SWITCH_OVERRIDE_BUFFER_PCT) || 0.10,
+
     // Circuit breaker: after N consecutive losses, pause entries for a cooldown period.
     // Set to 0 to disable.
     circuitBreakerConsecutiveLosses: Number(process.env.CIRCUIT_BREAKER_LOSSES) || 5,
@@ -332,6 +339,17 @@ export const CONFIG = {
     manageAllPositions:
       (process.env.LIVE_MANAGE_ALL_POSITIONS || 'true').toLowerCase() ===
       'true',
+
+    // Kill-switch override: additional loss buffer after override (10% = allows 10% more loss)
+    killSwitchOverrideBufferPct: Number(process.env.KILL_SWITCH_OVERRIDE_BUFFER_PCT) || 0.10,
+
+    // Order lifecycle: timeout for pending orders (auto-cancel after this)
+    orderTimeoutMs: Number(process.env.LIVE_ORDER_TIMEOUT_MS) || 30_000,
+
+    // Order retry: max attempts for CLOB order submission
+    maxOrderRetries: Number(process.env.LIVE_MAX_ORDER_RETRIES) || 3,
+
+    // Retry delays are hardcoded: [1000, 2000, 4000] ms (not env-configurable)
   },
 
   // UI server settings

@@ -82,6 +82,12 @@ export async function assembleStatus() {
       fees: engine?.executor?.feeService?.getSnapshot?.() ?? null,
       approvals: engine?.executor?.approvalService?.getStatus?.() ?? null,
     },
+    killSwitch: engine?.state?.getKillSwitchStatus?.(
+      engine?.config?.maxDailyLossUsd ?? CONFIG.liveTrading?.maxDailyLossUsd ?? CONFIG.paperTrading?.maxDailyLossUsd ?? null,
+    ) ?? null,
+    orderLifecycle: engine?.executor?.orderManager?.getAllOrderViews?.() ?? [],
+    reconciliation: engine?.executor?.getReconciliationStatus?.() ?? null,
+    failureEvents: (engine?.executor?.getFailureEvents?.() ?? []).slice(-10),
     runtime: globalThis.__uiStatus ?? null
   };
 }

@@ -1,31 +1,20 @@
 /**
  * @file Order lifecycle manager for the Polymarket CLOB.
  *
- * Tracks pending orders in memory, provides cancel/list functionality,
- * and reconciles pending orders by polling the CLOB API.
+ * Tracks pending orders in memory using OrderLifecycle instances,
+ * provides cancel/list functionality, and reconciles pending orders
+ * by polling the CLOB API.
  */
 
 import { getClobClient } from '../../live_trading/clob.js';
-
-/**
- * @typedef {Object} TrackedOrder
- * @property {string} orderId
- * @property {string} tokenID
- * @property {'BUY'|'SELL'} side
- * @property {number} price
- * @property {number} size
- * @property {'pending'|'open'|'filled'|'cancelled'|'unknown'} status
- * @property {string} createdAt - ISO timestamp
- * @property {string|null} updatedAt
- * @property {Object} [metadata] - Additional context (marketSlug, reason, etc.)
- */
+import { OrderLifecycle, LIFECYCLE_STATES } from '../../domain/orderLifecycle.js';
 
 export class OrderManager {
   constructor() {
     /** @type {import('@polymarket/clob-client').ClobClient|null} */
     this._client = null;
 
-    /** @type {Map<string, TrackedOrder>} orderId → TrackedOrder */
+    /** @type {Map<string, OrderLifecycle>} orderId -> OrderLifecycle */
     this._orders = new Map();
 
     /** @type {number} */
@@ -48,7 +37,7 @@ export class OrderManager {
   }
 
   /**
-   * Start tracking a new order.
+   * Start tracking a new order with a full lifecycle.
    * @param {string} orderId
    * @param {Object} metadata
    * @param {string} metadata.tokenID
@@ -56,21 +45,87 @@ export class OrderManager {
    * @param {number} metadata.price
    * @param {number} metadata.size
    * @param {Object} [metadata.extra] - Any extra context
+   * @returns {OrderLifecycle|null} The created lifecycle, or null if orderId missing
    */
   trackOrder(orderId, metadata) {
-    if (!orderId) return;
+    if (!orderId) return null;
 
-    this._orders.set(orderId, {
-      orderId,
+    const lifecycle = new OrderLifecycle(orderId, {
       tokenID: metadata.tokenID,
       side: metadata.side,
       price: metadata.price,
       size: metadata.size,
-      status: 'pending',
-      createdAt: new Date().toISOString(),
-      updatedAt: null,
-      metadata: metadata.extra || null,
+      extra: metadata.extra || null,
     });
+
+    this._orders.set(orderId, lifecycle);
+    return lifecycle;
+  }
+
+  /**
+   * Get an order lifecycle by ID.
+   * @param {string} orderId
+   * @returns {OrderLifecycle|null}
+   */
+  getOrder(orderId) {
+    return this._orders.get(orderId) || null;
+  }
+
+  /**
+   * Transition an order to a new state.
+   * @param {string} orderId
+   * @param {string} newState - One of LIFECYCLE_STATES
+   * @returns {boolean} True if transition succeeded
+   */
+  transitionOrder(orderId, newState) {
+    const lifecycle = this._orders.get(orderId);
+    if (!lifecycle) return false;
+    return lifecycle.transition(newState);
+  }
+
+  /**
+   * Get all active (non-terminal) orders.
+   * @returns {OrderLifecycle[]}
+   */
+  getActiveOrders() {
+    return [...this._orders.values()].filter(o => !o.isTerminal());
+  }
+
+  /**
+   * Get orders that have exceeded the fill timeout.
+   * @param {number} [timeoutMs=30000]
+   * @returns {OrderLifecycle[]}
+   */
+  getTimedOutOrders(timeoutMs = 30_000) {
+    return [...this._orders.values()].filter(o => o.isTimedOut(timeoutMs));
+  }
+
+  /**
+   * Check all orders for timeouts and return the timed-out ones.
+   * Does NOT automatically transition them — caller decides what to do.
+   * @param {number} [timeoutMs=30000]
+   * @returns {OrderLifecycle[]}
+   */
+  checkTimeouts(timeoutMs = 30_000) {
+    return this.getTimedOutOrders(timeoutMs);
+  }
+
+  /**
+   * Get a view snapshot of a single order for UI/API.
+   * @param {string} orderId
+   * @returns {Object|null}
+   */
+  getOrderView(orderId) {
+    const lifecycle = this._orders.get(orderId);
+    return lifecycle ? lifecycle.getView() : null;
+  }
+
+  /**
+   * Get view snapshots for all tracked orders.
+   * @returns {Object[]}
+   */
+  getAllOrderViews() {
+    return [...this._orders.values()].map(o => o.getView());
   }
 
   /**
@@ -87,10 +142,9 @@ export class OrderManager {
     try {
       await client.cancelOrder({ orderID: orderId });
 
-      const tracked = this._orders.get(orderId);
-      if (tracked) {
-        tracked.status = 'cancelled';
-        tracked.updatedAt = new Date().toISOString();
+      const lifecycle = this._orders.get(orderId);
+      if (lifecycle) {
+        lifecycle.transition(LIFECYCLE_STATES.CANCELLED);
       }
 
       return { cancelled: true };
@@ -112,11 +166,10 @@ export class OrderManager {
     try {
       const result = await client.cancelAll();
 
-      // Mark all tracked as cancelled
-      for (const order of this._orders.values()) {
-        if (order.status === 'pending' || order.status === 'open') {
-          order.status = 'cancelled';
-          order.updatedAt = new Date().toISOString();
+      // Transition all active orders to CANCELLED
+      for (const lifecycle of this._orders.values()) {
+        if (!lifecycle.isTerminal()) {
+          lifecycle.transition(LIFECYCLE_STATES.CANCELLED);
         }
       }
 
@@ -128,7 +181,7 @@ export class OrderManager {
 
   /**
    * Reconcile pending orders by polling the CLOB API.
-   * Checks the status of each tracked pending/open order.
+   * Checks the status of each tracked pending/open order and transitions lifecycle.
    *
    * @param {Object} [opts]
    * @param {number} [opts.minIntervalMs] - Min time between reconciliations (default 5s)
@@ -152,32 +205,45 @@ export class OrderManager {
     const cancelled = [];
     let reconciled = 0;
 
-    for (const [orderId, order] of this._orders) {
-      if (order.status !== 'pending' && order.status !== 'open') continue;
+    for (const [orderId, lifecycle] of this._orders) {
+      if (lifecycle.isTerminal()) continue;
+      // Only reconcile SUBMITTED and PENDING orders
+      if (lifecycle.state !== LIFECYCLE_STATES.SUBMITTED &&
+          lifecycle.state !== LIFECYCLE_STATES.PENDING) continue;
 
       try {
         const apiOrder = await client.getOrder(orderId);
         reconciled++;
 
         if (!apiOrder) {
-          order.status = 'unknown';
-          order.updatedAt = new Date().toISOString();
+          lifecycle.transition(LIFECYCLE_STATES.FAILED);
+          lifecycle.error = 'Order not found via API';
           continue;
         }
 
         const apiStatus = String(apiOrder.status || apiOrder.order_status || '').toLowerCase();
 
         if (apiStatus === 'filled' || apiStatus === 'matched') {
-          order.status = 'filled';
-          order.updatedAt = new Date().toISOString();
+          // Transition through PENDING -> FILLED if still SUBMITTED
+          if (lifecycle.state === LIFECYCLE_STATES.SUBMITTED) {
+            lifecycle.transition(LIFECYCLE_STATES.PENDING);
+          }
+          lifecycle.transition(LIFECYCLE_STATES.FILLED);
+
+          // Record fill details if available
+          const fillSize = Number(apiOrder.size_matched || apiOrder.fillSize || lifecycle.meta.size || 0);
+          const fillPrice = Number(apiOrder.price || lifecycle.meta.price || 0);
+          lifecycle.recordFill(fillSize, fillPrice);
+
           filled.push(orderId);
         } else if (apiStatus === 'cancelled' || apiStatus === 'canceled') {
-          order.status = 'cancelled';
-          order.updatedAt = new Date().toISOString();
+          lifecycle.transition(LIFECYCLE_STATES.CANCELLED);
           cancelled.push(orderId);
         } else if (apiStatus === 'live' || apiStatus === 'open') {
-          order.status = 'open';
-          order.updatedAt = new Date().toISOString();
+          // Transition to PENDING if still SUBMITTED
+          if (lifecycle.state === LIFECYCLE_STATES.SUBMITTED) {
+            lifecycle.transition(LIFECYCLE_STATES.PENDING);
+          }
         }
       } catch {
         // Skip — will retry next reconciliation
@@ -189,47 +255,88 @@ export class OrderManager {
 
   /**
    * Get all tracked orders, optionally filtered by status.
+   * Returns TrackedOrder-shaped objects for backward compatibility.
    * @param {Object} [opts]
-   * @param {string} [opts.status] - Filter by status ('pending'|'open'|'filled'|'cancelled')
-   * @returns {TrackedOrder[]}
+   * @param {string} [opts.status] - Filter by legacy status name ('pending'|'open'|'filled'|'cancelled')
+   * @returns {Object[]}
    */
   getPendingOrders(opts = {}) {
-    const orders = [...this._orders.values()];
+    const orders = this.getAllOrderViews().map(v => ({
+      orderId: v.orderId,
+      tokenID: v.tokenID,
+      side: v.side,
+      price: v.price,
+      size: v.size,
+      status: this._lifecycleStateToLegacy(v.state),
+      createdAt: v.timestamps?.SUBMITTED
+        ? new Date(v.timestamps.SUBMITTED).toISOString()
+        : new Date().toISOString(),
+      updatedAt: null,
+      metadata: v.extra,
+    }));
+
     if (opts.status) {
-      return orders.filter((o) => o.status === opts.status);
+      return orders.filter(o => o.status === opts.status);
     }
     return orders;
   }
 
   /**
    * Get a snapshot for the API.
-   * @returns {{ total: number, pending: number, open: number, filled: number, cancelled: number, orders: TrackedOrder[] }}
+   * @returns {{ total: number, pending: number, open: number, filled: number, cancelled: number, orders: Object[] }}
    */
   getSnapshot() {
-    const orders = [...this._orders.values()];
+    const orders = this.getPendingOrders();
     return {
       total: orders.length,
-      pending: orders.filter((o) => o.status === 'pending').length,
-      open: orders.filter((o) => o.status === 'open').length,
-      filled: orders.filter((o) => o.status === 'filled').length,
-      cancelled: orders.filter((o) => o.status === 'cancelled').length,
+      pending: orders.filter(o => o.status === 'pending').length,
+      open: orders.filter(o => o.status === 'open').length,
+      filled: orders.filter(o => o.status === 'filled').length,
+      cancelled: orders.filter(o => o.status === 'cancelled').length,
       orders,
     };
   }
 
   /**
-   * Clean up old orders (e.g., filled/cancelled older than N minutes).
+   * Clean up old orders (e.g., terminal older than N minutes).
    * @param {number} [maxAgeMs=30*60_000] - Max age for completed orders (default 30 min)
    */
   pruneOldOrders(maxAgeMs = 30 * 60_000) {
     const cutoff = Date.now() - maxAgeMs;
-    for (const [orderId, order] of this._orders) {
-      if (
-        (order.status === 'filled' || order.status === 'cancelled') &&
-        new Date(order.updatedAt || order.createdAt).getTime() < cutoff
-      ) {
-        this._orders.delete(orderId);
+    for (const [orderId, lifecycle] of this._orders) {
+      if (lifecycle.isTerminal()) {
+        const submittedAt = lifecycle.timestamps[LIFECYCLE_STATES.SUBMITTED] || 0;
+        if (submittedAt < cutoff) {
+          this._orders.delete(orderId);
+        }
       }
+    }
+  }
+
+  /**
+   * Map lifecycle state to legacy status string for backward compatibility.
+   * @param {string} state - LIFECYCLE_STATES value
+   * @returns {string}
+   */
+  _lifecycleStateToLegacy(state) {
+    switch (state) {
+      case LIFECYCLE_STATES.SUBMITTED:
+        return 'pending';
+      case LIFECYCLE_STATES.PENDING:
+        return 'open';
+      case LIFECYCLE_STATES.FILLED:
+      case LIFECYCLE_STATES.PARTIAL_FILL:
+      case LIFECYCLE_STATES.MONITORING:
+      case LIFECYCLE_STATES.EXITED:
+        return 'filled';
+      case LIFECYCLE_STATES.CANCELLED:
+        return 'cancelled';
+      case LIFECYCLE_STATES.TIMED_OUT:
+        return 'cancelled';
+      case LIFECYCLE_STATES.FAILED:
+        return 'cancelled';
+      default:
+        return 'unknown';
     }
   }
 }

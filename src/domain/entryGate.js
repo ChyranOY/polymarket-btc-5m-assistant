@@ -399,11 +399,25 @@ export function computeEntryBlockers(signals, config, state, candleCount) {
     }
   }
 
-  // ── 25. Daily loss kill-switch (was live-only, now unified) ────
+  // ── 25. Daily loss kill-switch (Phase 3: uses domain killSwitch module) ────
   const maxDailyLossUsd = config.maxDailyLossUsd ?? null;
-  if (isNum(maxDailyLossUsd) && maxDailyLossUsd > 0 && isNum(state.todayRealizedPnl)) {
-    if (state.todayRealizedPnl <= -Math.abs(maxDailyLossUsd)) {
-      blockers.push(`Daily loss kill-switch hit ($${state.todayRealizedPnl.toFixed(2)} <= -$${Math.abs(maxDailyLossUsd).toFixed(2)})`);
+  if (isNum(maxDailyLossUsd) && maxDailyLossUsd > 0) {
+    // Use checkKillSwitch from TradingState if available (Phase 3 integration)
+    if (typeof state.checkKillSwitch === 'function') {
+      const ksResult = state.checkKillSwitch(maxDailyLossUsd, {
+        overrideBufferPct: config.killSwitchOverrideBufferPct ?? 0.10,
+      });
+      if (ksResult.triggered) {
+        blockers.push(`Daily loss kill-switch: ${ksResult.reason}`);
+      } else if (ksResult.overridden) {
+        // Override is active — trading allowed but log for awareness
+        // (no blocker added, just pass through)
+      }
+    } else if (isNum(state.todayRealizedPnl)) {
+      // Fallback for legacy TradingState without killSwitch integration
+      if (state.todayRealizedPnl <= -Math.abs(maxDailyLossUsd)) {
+        blockers.push(`Daily loss kill-switch hit ($${state.todayRealizedPnl.toFixed(2)} <= -$${Math.abs(maxDailyLossUsd).toFixed(2)})`);
+      }
     }
   }
 

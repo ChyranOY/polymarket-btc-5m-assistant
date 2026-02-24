@@ -50,3 +50,36 @@ export function computeTradeSize(balance, config) {
 
   return size > 0 ? size : 0;
 }
+
+/**
+ * Compute fee-aware USD trade size.
+ *
+ * Calls computeTradeSize first, then subtracts estimated fees so the
+ * actual position after fees matches the intended risk amount.
+ *
+ * @param {number} balance          - Current available balance ($)
+ * @param {Object} config           - Same config as computeTradeSize
+ * @param {number|null} feeRateBps  - Fee rate in basis points (e.g., 200 = 2%). Null = no fee deduction.
+ * @returns {number} Fee-adjusted trade size in USD (0 if no valid size)
+ */
+export function computeTradeSizeWithFees(balance, config, feeRateBps) {
+  const rawSize = computeTradeSize(balance, config);
+  if (rawSize <= 0) return 0;
+
+  // If no fee info, return raw size (backward compatible)
+  if (!isNum(feeRateBps) || feeRateBps <= 0) return rawSize;
+
+  // Clamp fee rate to 1000bps (10%) as safety valve
+  const clampedBps = Math.min(feeRateBps, 1000);
+  const feeMultiplier = 1 - clampedBps / 10000;
+  let adjusted = rawSize * feeMultiplier;
+
+  // Round down to nearest cent
+  adjusted = Math.floor(adjusted * 100) / 100;
+
+  // Re-check against minTradeUsd after fee deduction
+  const minUsd = config.minTradeUsd ?? 0;
+  if (adjusted < minUsd) return 0;
+
+  return adjusted > 0 ? adjusted : 0;
+}

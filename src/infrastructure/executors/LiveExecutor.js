@@ -4,6 +4,12 @@
  * Implements the OrderExecutor interface. Delegates to @polymarket/clob-client
  * for actual order placement. Reuses existing position tracking and PnL
  * computation modules.
+ *
+ * Phase 3 additions:
+ *   - Orders wrapped with withOrderRetry for automatic retry on transient failures
+ *   - Full lifecycle tracking via OrderManager + OrderLifecycle
+ *   - Timeout detection: orders pending > 30s are auto-cancelled
+ *   - Structured failure events (createFailureEvent) for Phase 4 webhook
  */
 
 import { OrderExecutor } from '../../application/ExecutorInterface.js';
@@ -19,6 +25,10 @@ import { FeeService } from '../fees/FeeService.js';
 import { ApprovalService } from '../approvals/ApprovalService.js';
 import { OrderManager } from '../orders/OrderManager.js';
 import { pickTokenId } from '../market/tokenMapping.js';
+import { LIFECYCLE_STATES } from '../../domain/orderLifecycle.js';
+import { withOrderRetry, createFailureEvent } from '../../domain/retryPolicy.js';
+import { reconcilePositions, SYNC_STATUS } from '../../domain/reconciliation.js';
+import { computeTradeSizeWithFees } from '../../domain/sizing.js';
 
 /** @import { OrderRequest, OrderResult, CloseRequest, CloseResult, PositionView, BalanceSnapshot } from '../../domain/types.js' */
 
@@ -60,6 +70,22 @@ export class LiveExecutor extends OrderExecutor {
 
     // Exit spam guard (30s cooldown per tokenID)
     this._lastExitAttemptMsByToken = new Map();
+
+    // Structured failure events (capped at 100, FIFO)
+    this._failureEvents = [];
+
+    // Retry config from CONFIG or defaults
+    this._orderTimeoutMs = CONFIG.liveTrading?.orderTimeoutMs ?? 30_000;
+    this._maxOrderRetries = CONFIG.liveTrading?.maxOrderRetries ?? 3;
+    this._retryDelays = [1000, 2000, 4000];
+
+    // Reconciliation state (Phase 3: LIVE-02)
+    this._reconciliationStatus = {
+      status: SYNC_STATUS.CHECKING,
+      discrepancies: [],
+      lastCheckMs: 0,
+      lastDiscrepancyMs: null,
+    };
   }
 
   getMode() {
@@ -77,6 +103,27 @@ export class LiveExecutor extends OrderExecutor {
     console.log('LiveExecutor initialized.');
   }
 
+  // ─── Failure event tracking ────────────────────────────────────
+
+  /**
+   * Store a failure event (capped at 100).
+   * @param {Object} event
+   */
+  _recordFailureEvent(event) {
+    this._failureEvents.push(event);
+    if (this._failureEvents.length > 100) {
+      this._failureEvents.shift(); // FIFO evict oldest
+    }
+  }
+
+  /**
+   * Get all stored failure events (for Phase 4 webhook consumption).
+   * @returns {Object[]}
+   */
+  getFailureEvents() {
+    return [...this._failureEvents];
+  }
+
   // ─── OrderExecutor interface ─────────────────────────────────
 
   /**
@@ -85,11 +132,12 @@ export class LiveExecutor extends OrderExecutor {
    */
   async openPosition(request) {
     const { side, marketSlug, sizeUsd, price, phase, metadata } = request;
+    const emptyResult = { filled: false, tradeId: null, fillPrice: 0, fillShares: 0, fillSizeUsd: 0 };
 
     const market = this.getMarket();
     const tokenID = market ? pickTokenId(market, side) : null;
     if (!tokenID) {
-      return { filled: false, tradeId: null, fillPrice: 0, fillShares: 0, fillSizeUsd: 0 };
+      return emptyResult;
     }
 
     // Check collateral
@@ -101,7 +149,7 @@ export class LiveExecutor extends OrderExecutor {
       CONFIG.liveTrading?.maxOpenExposureUsd || maxPer,
     );
     if (!isNum(usd) || usd <= 0) {
-      return { filled: false, tradeId: null, fillPrice: 0, fillShares: 0, fillSizeUsd: 0 };
+      return emptyResult;
     }
 
     // Fetch live buy price
@@ -113,21 +161,42 @@ export class LiveExecutor extends OrderExecutor {
       // use passed price
     }
 
-    const size = Math.max(5, Math.floor(usd / buyPrice));
+    // Fetch fee rate for fee-aware sizing (Phase 3: LIVE-03)
+    let feeRateBpsForSizing = null;
+    try {
+      feeRateBpsForSizing = await this.feeService.getFeeRateBps(tokenID);
+    } catch {
+      // Fee lookup for sizing is best-effort
+    }
+
+    // Fee-aware sizing: deduct estimated fees from trade size
+    const rawUsd = usd;
+    const feeAdjustedUsd = feeRateBpsForSizing != null
+      ? computeTradeSizeWithFees(usd, this.config, feeRateBpsForSizing)
+      : usd;
+    const effectiveUsd = feeAdjustedUsd > 0 ? feeAdjustedUsd : usd;
+
+    if (feeRateBpsForSizing != null && feeAdjustedUsd !== rawUsd) {
+      console.log(
+        `[live] Fee-adjusted size: $${effectiveUsd.toFixed(2)} (raw: $${rawUsd.toFixed(2)}, fee: ${feeRateBpsForSizing} bps)`,
+      );
+    }
+
+    const size = Math.max(5, Math.floor(effectiveUsd / buyPrice));
 
     // ── Order validation ─────────────────────────────────────────
     if (size < 5) {
       console.warn(`[live] Order rejected: size ${size} < CLOB minimum 5`);
-      return { filled: false, tradeId: null, fillPrice: 0, fillShares: 0, fillSizeUsd: 0 };
+      return emptyResult;
     }
     if (!isNum(buyPrice) || buyPrice < 0.001 || buyPrice > 0.999) {
       console.warn(`[live] Order rejected: price ${buyPrice} outside [0.001, 0.999]`);
-      return { filled: false, tradeId: null, fillPrice: 0, fillShares: 0, fillSizeUsd: 0 };
+      return emptyResult;
     }
     const maxPerTrade = CONFIG.liveTrading?.maxPerTradeUsd ?? Infinity;
     if (size * buyPrice > maxPerTrade) {
       console.warn(`[live] Order rejected: notional $${(size * buyPrice).toFixed(2)} > maxPerTradeUsd $${maxPerTrade}`);
-      return { filled: false, tradeId: null, fillPrice: 0, fillShares: 0, fillSizeUsd: 0 };
+      return emptyResult;
     }
 
     // Fetch fee rate for observability (SDK handles actual fee injection)
@@ -145,24 +214,38 @@ export class LiveExecutor extends OrderExecutor {
       // Fee lookup is best-effort observability
     }
 
+    let retryCount = 0;
     try {
       // Dynamic import to avoid crashing if the library isn't installed
       const { OrderType } = await import('@polymarket/clob-client');
 
-      const resp = await this.client.createAndPostOrder(
-        { tokenID, price: buyPrice, size, side: 'BUY' },
-        {},
-        OrderType.GTC,
-        false,
-        Boolean(CONFIG.liveTrading?.postOnly),
+      // Wrap CLOB call with retry policy
+      const resp = await withOrderRetry(
+        async () => {
+          retryCount++;
+          return this.client.createAndPostOrder(
+            { tokenID, price: buyPrice, size, side: 'BUY' },
+            {},
+            OrderType.GTC,
+            false,
+            Boolean(CONFIG.liveTrading?.postOnly),
+          );
+        },
+        {
+          maxAttempts: this._maxOrderRetries,
+          delays: this._retryDelays,
+        },
       );
 
-      // Track order in OrderManager
+      // Track order lifecycle
       if (resp?.orderID) {
-        this.orderManager.trackOrder(resp.orderID, {
+        const lifecycle = this.orderManager.trackOrder(resp.orderID, {
           tokenID, side: 'BUY', price: buyPrice, size,
           extra: { marketSlug, phase, type: 'OPEN' },
         });
+        if (lifecycle) {
+          lifecycle.transition(LIFECYCLE_STATES.PENDING);
+        }
       }
 
       await appendLiveTrade({
@@ -177,6 +260,7 @@ export class LiveExecutor extends OrderExecutor {
         orderID: resp?.orderID || null,
         feeRateBps,
         feeImpact,
+        retryCount: retryCount - 1, // actual retries (0 if first attempt worked)
         resp,
       });
 
@@ -189,6 +273,11 @@ export class LiveExecutor extends OrderExecutor {
         orderId: resp?.orderID || null,
       };
     } catch (e) {
+      // Create and store structured failure event
+      const failEvent = createFailureEvent(null, e, retryCount - 1);
+      this._recordFailureEvent(failEvent);
+      console.error(`[live] OPEN failed after ${retryCount} attempt(s): ${e?.message || e}`);
+
       await appendLiveTrade({
         type: 'OPEN_FAILED',
         ts: new Date().toISOString(),
@@ -196,8 +285,9 @@ export class LiveExecutor extends OrderExecutor {
         side,
         tokenID,
         error: e?.response?.data || e?.message || String(e),
+        retryCount: retryCount - 1,
       });
-      return { filled: false, tradeId: null, fillPrice: 0, fillShares: 0, fillSizeUsd: 0 };
+      return emptyResult;
     }
   }
 
@@ -278,23 +368,37 @@ export class LiveExecutor extends OrderExecutor {
       // best-effort
     }
 
+    let retryCount = 0;
     try {
       const { OrderType } = await import('@polymarket/clob-client');
 
-      const resp = await this.client.createAndPostOrder(
-        { tokenID: tid, price: sellPrice, size, side: 'SELL' },
-        {},
-        OrderType.GTC,
-        false,
-        false, // postOnly OFF for exits
+      // Wrap exit CLOB call with retry policy
+      const resp = await withOrderRetry(
+        async () => {
+          retryCount++;
+          return this.client.createAndPostOrder(
+            { tokenID: tid, price: sellPrice, size, side: 'SELL' },
+            {},
+            OrderType.GTC,
+            false,
+            false, // postOnly OFF for exits
+          );
+        },
+        {
+          maxAttempts: this._maxOrderRetries,
+          delays: this._retryDelays,
+        },
       );
 
-      // Track exit order in OrderManager
+      // Track exit order lifecycle
       if (resp?.orderID) {
-        this.orderManager.trackOrder(resp.orderID, {
+        const lifecycle = this.orderManager.trackOrder(resp.orderID, {
           tokenID: tid, side: 'SELL', price: sellPrice, size,
           extra: { reason, type: 'EXIT_SELL' },
         });
+        if (lifecycle) {
+          lifecycle.transition(LIFECYCLE_STATES.PENDING);
+        }
       }
 
       await appendLiveTrade({
@@ -306,6 +410,7 @@ export class LiveExecutor extends OrderExecutor {
         reason,
         feeRateBps: exitFeeRateBps,
         feeImpact: exitFeeImpact,
+        retryCount: retryCount - 1,
         resp,
       });
 
@@ -319,6 +424,11 @@ export class LiveExecutor extends OrderExecutor {
         reason,
       };
     } catch (e) {
+      // Create and store structured failure event
+      const failEvent = createFailureEvent(null, e, retryCount - 1);
+      this._recordFailureEvent(failEvent);
+      console.error(`[live] EXIT failed after ${retryCount} attempt(s): ${e?.message || e}`);
+
       await appendLiveTrade({
         type: 'EXIT_SELL_FAILED',
         ts: new Date().toISOString(),
@@ -327,6 +437,7 @@ export class LiveExecutor extends OrderExecutor {
         size,
         reason,
         error: e?.response?.data || e?.message || String(e),
+        retryCount: retryCount - 1,
       });
       return { closed: false, exitPrice: 0, pnl: 0, reason };
     }
@@ -356,6 +467,32 @@ export class LiveExecutor extends OrderExecutor {
       }
     }
 
+    // ── Timeout detection: auto-cancel orders pending > orderTimeoutMs ──
+    try {
+      const timedOut = this.orderManager.checkTimeouts(this._orderTimeoutMs);
+      for (const lifecycle of timedOut) {
+        console.warn(`[live] Order ${lifecycle.orderId} timed out (>${this._orderTimeoutMs / 1000}s). Attempting cancel...`);
+
+        try {
+          const cancelResult = await this.orderManager.cancelOrder(lifecycle.orderId);
+          if (cancelResult.cancelled) {
+            lifecycle.transition(LIFECYCLE_STATES.TIMED_OUT);
+            console.log(`[live] Order ${lifecycle.orderId} cancelled after timeout`);
+          } else {
+            lifecycle.transition(LIFECYCLE_STATES.FAILED);
+            lifecycle.error = `Cancel failed: ${cancelResult.error}`;
+            console.warn(`[live] Order ${lifecycle.orderId} cancel failed: ${cancelResult.error}. Marking FAILED.`);
+          }
+        } catch (cancelErr) {
+          lifecycle.transition(LIFECYCLE_STATES.FAILED);
+          lifecycle.error = `Cancel exception: ${cancelErr?.message || cancelErr}`;
+          console.warn(`[live] Order ${lifecycle.orderId} cancel exception: ${cancelErr?.message || cancelErr}. Marking FAILED.`);
+        }
+      }
+    } catch {
+      // timeout check is best-effort
+    }
+
     // Auto-prune stale exit attempt timestamps (>10 min) when map is large
     if (this._lastExitAttemptMsByToken.size > 50) {
       const staleThreshold = now - 10 * 60_000;
@@ -364,8 +501,65 @@ export class LiveExecutor extends OrderExecutor {
       }
     }
 
+    // Prune old terminal orders (>30 min)
+    this.orderManager.pruneOldOrders(30 * 60_000);
+
     const rawPositions = computePositionsFromTrades(this._cachedTrades);
     this._hadPositionLastLoop = rawPositions.length > 0;
+
+    // ── Reconciliation: compare local tracking vs CLOB positions ──
+    try {
+      // Build local positions from OrderManager (active orders with fills)
+      const activeOrders = this.orderManager.getActiveOrders();
+      const localPositions = activeOrders
+        .filter(o => o.fillSize > 0 && o.meta?.extra?.type === 'OPEN')
+        .map(o => ({
+          tokenID: o.meta.tokenID,
+          qty: o.fillSize,
+          side: o.meta.side === 'BUY' ? (o.meta.extra?.marketSlug ? 'UP' : 'UP') : 'DOWN',
+          createdAtMs: o.timestamps?.SUBMITTED ?? 0,
+        }));
+
+      // Build CLOB positions from rawPositions
+      const clobPositions = rawPositions.map(p => ({
+        tokenID: p.tokenID,
+        qty: p.qty,
+        side: String(p.outcome || '').toUpperCase() === 'DOWN' ? 'DOWN' : 'UP',
+      }));
+
+      const reconResult = reconcilePositions(localPositions, clobPositions, {
+        graceWindowMs: 10_000,
+        nowMs: now,
+      });
+
+      this._reconciliationStatus = {
+        status: reconResult.status,
+        discrepancies: reconResult.discrepancies,
+        lastCheckMs: now,
+        lastDiscrepancyMs: reconResult.discrepancies.length > 0
+          ? now
+          : this._reconciliationStatus.lastDiscrepancyMs,
+      };
+
+      if (reconResult.discrepancies.length > 0) {
+        console.warn(
+          `[live] RECONCILIATION DISCREPANCY: ${reconResult.discrepancies.length} issue(s)`,
+          JSON.stringify(reconResult.discrepancies),
+        );
+
+        // Store as structured event for Phase 4 webhook
+        this._recordFailureEvent({
+          type: 'RECONCILIATION_DISCREPANCY',
+          discrepancies: reconResult.discrepancies,
+          timestamp: new Date().toISOString(),
+          severity: 'warning',
+          category: 'reconciliation',
+        });
+      }
+    } catch {
+      // Reconciliation errors should NOT prevent normal trading operations
+      this._reconciliationStatus.status = SYNC_STATUS.CHECKING;
+    }
 
     // Pre-approve conditional token allowance for any open position (via ApprovalService)
     for (const p of rawPositions) {
@@ -438,6 +632,14 @@ export class LiveExecutor extends OrderExecutor {
       starting: collateral, // Live doesn't have a "starting" concept
       realized: 0,
     };
+  }
+
+  /**
+   * Get the current reconciliation status for API/dashboard.
+   * @returns {{ status: string, discrepancies: Array, lastCheckMs: number, lastDiscrepancyMs: number|null }}
+   */
+  getReconciliationStatus() {
+    return { ...this._reconciliationStatus };
   }
 
   // ─── Helpers ─────────────────────────────────────────────────

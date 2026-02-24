@@ -7,6 +7,7 @@ import {
   dayKeyFromTrade,
   weekKeyFromTrade,
   sessionKeyFromTrade,
+  regimeKeyFromTrade,
   computeDailyReturns,
   computeSharpeRatio,
   computeSortinoRatio,
@@ -380,4 +381,90 @@ test('computeAnalytics metricsConfidence is HIGH when 30+ daily returns', () => 
   }
   const result = computeAnalytics(trades);
   assert.equal(result.advancedMetrics.metricsConfidence, 'HIGH');
+});
+
+// ─── regimeKeyFromTrade ───────────────────────────────────────────────
+
+test('regimeKeyFromTrade returns Oversold for RSI < 30', () => {
+  assert.equal(regimeKeyFromTrade({ rsiAtEntry: 20 }), 'Oversold');
+  assert.equal(regimeKeyFromTrade({ rsiAtEntry: 29.9 }), 'Oversold');
+});
+
+test('regimeKeyFromTrade returns Ranging for RSI 30-70', () => {
+  assert.equal(regimeKeyFromTrade({ rsiAtEntry: 30 }), 'Ranging');
+  assert.equal(regimeKeyFromTrade({ rsiAtEntry: 50 }), 'Ranging');
+  assert.equal(regimeKeyFromTrade({ rsiAtEntry: 69.9 }), 'Ranging');
+});
+
+test('regimeKeyFromTrade returns Overbought for RSI >= 70', () => {
+  assert.equal(regimeKeyFromTrade({ rsiAtEntry: 70 }), 'Overbought');
+  assert.equal(regimeKeyFromTrade({ rsiAtEntry: 85 }), 'Overbought');
+});
+
+test('regimeKeyFromTrade returns unknown for missing/null RSI', () => {
+  assert.equal(regimeKeyFromTrade({}), 'unknown');
+  assert.equal(regimeKeyFromTrade({ rsiAtEntry: null }), 'unknown');
+  assert.equal(regimeKeyFromTrade({ rsiAtEntry: NaN }), 'unknown');
+  assert.equal(regimeKeyFromTrade(null), 'unknown');
+});
+
+// ─── groupSummary profitFactor ────────────────────────────────────────
+
+test('groupSummary includes profitFactor per bucket', () => {
+  const trades = [
+    { pnl: 10, cat: 'A' },
+    { pnl: -5, cat: 'A' },
+    { pnl: 8, cat: 'B' },
+  ];
+  const result = groupSummary(trades, t => t.cat);
+  const bucketA = result.find(b => b.key === 'A');
+  const bucketB = result.find(b => b.key === 'B');
+
+  assert.ok(bucketA);
+  // PF = 10 / |-5| = 2.0
+  assert.ok(Math.abs(bucketA.profitFactor - 2.0) < 0.001);
+
+  assert.ok(bucketB);
+  // Only wins, no losses -> PF = null
+  assert.equal(bucketB.profitFactor, null);
+});
+
+test('groupSummary profitFactor with only losses', () => {
+  const trades = [
+    { pnl: -10, cat: 'X' },
+    { pnl: -5, cat: 'X' },
+  ];
+  const result = groupSummary(trades, t => t.cat);
+  const bucket = result.find(b => b.key === 'X');
+  assert.ok(bucket);
+  // winPnl = 0, lossPnl = -15, PF = 0 / 15 = 0
+  assert.equal(bucket.profitFactor, 0);
+});
+
+// ─── computeAnalytics byMarketRegime ──────────────────────────────────
+
+test('computeAnalytics includes byMarketRegime', () => {
+  const trades = [
+    { status: 'CLOSED', pnl: 10, rsiAtEntry: 25 },
+    { status: 'CLOSED', pnl: -5, rsiAtEntry: 50 },
+    { status: 'CLOSED', pnl: 8, rsiAtEntry: 75 },
+  ];
+  const result = computeAnalytics(trades);
+  assert.ok(Array.isArray(result.byMarketRegime));
+
+  const oversold = result.byMarketRegime.find(b => b.key === 'Oversold');
+  const ranging = result.byMarketRegime.find(b => b.key === 'Ranging');
+  const overbought = result.byMarketRegime.find(b => b.key === 'Overbought');
+
+  assert.ok(oversold);
+  assert.equal(oversold.count, 1);
+  assert.equal(oversold.pnl, 10);
+
+  assert.ok(ranging);
+  assert.equal(ranging.count, 1);
+  assert.equal(ranging.pnl, -5);
+
+  assert.ok(overbought);
+  assert.equal(overbought.count, 1);
+  assert.equal(overbought.pnl, 8);
 });

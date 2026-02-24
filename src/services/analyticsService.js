@@ -20,18 +20,19 @@ export function groupSummary(trades, keyFn) {
   const map = new Map();
   for (const t of trades) {
     const key = String(keyFn(t) ?? 'unknown');
-    const cur = map.get(key) || { key, count: 0, pnl: 0, wins: 0, losses: 0 };
+    const cur = map.get(key) || { key, count: 0, pnl: 0, wins: 0, losses: 0, winPnl: 0, lossPnl: 0 };
     const pnl = (typeof t.pnl === 'number' && Number.isFinite(t.pnl)) ? t.pnl : 0;
     cur.count += 1;
     cur.pnl += pnl;
-    if (pnl > 0) cur.wins += 1;
-    else if (pnl < 0) cur.losses += 1;
+    if (pnl > 0) { cur.wins += 1; cur.winPnl += pnl; }
+    else if (pnl < 0) { cur.losses += 1; cur.lossPnl += pnl; }
     map.set(key, cur);
   }
   const result = Array.from(map.values()).map(bucket => ({
     ...bucket,
     winRate: bucket.count > 0 ? bucket.wins / bucket.count : null,
     avgPnl: bucket.count > 0 ? bucket.pnl / bucket.count : null,
+    profitFactor: bucket.lossPnl !== 0 ? bucket.winPnl / Math.abs(bucket.lossPnl) : null,
   }));
   return result.sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl));
 }
@@ -117,6 +118,18 @@ function bucketRsi(trade) {
   if (r < 55) return '45\u201355';
   if (r < 70) return '55\u201370';
   return '70+';
+}
+
+/**
+ * Classify trade by RSI market regime (coarse 3-bucket).
+ * Oversold: RSI < 30, Ranging: 30-70, Overbought: >= 70.
+ */
+export function regimeKeyFromTrade(trade) {
+  const r = trade?.rsiAtEntry;
+  if (typeof r !== 'number' || !Number.isFinite(r)) return 'unknown';
+  if (r < 30) return 'Oversold';
+  if (r < 70) return 'Ranging';
+  return 'Overbought';
 }
 
 function bucketHoldTime(trade) {
@@ -378,6 +391,9 @@ export function computeAnalytics(allTrades) {
     byDay: groupSummary(closed, dayKeyFromTrade),
     byWeek: groupSummary(closed, weekKeyFromTrade),
     bySession: groupSummary(closed, sessionKeyFromTrade),
+
+    // Market regime grouping (Oversold/Ranging/Overbought by RSI at entry)
+    byMarketRegime: groupSummary(closed, regimeKeyFromTrade),
 
     // Advanced metrics
     advancedMetrics: {

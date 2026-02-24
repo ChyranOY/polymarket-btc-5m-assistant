@@ -37,6 +37,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Fetch data for active tab
     if (tabName === 'analytics') {
       fetchAndRenderAnalytics();
+      fetchAndRenderSuggestions();
+      fetchAndRenderTracking();
     } else if (tabName === 'optimizer') {
       fetchCurrentConfig();
       checkRevertAvailable();
@@ -64,6 +66,19 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  // ── Segmented Performance sub-tab navigation ─────────────────────
+
+  let activeSegment = 'entryPhase';
+
+  const segBtns = document.querySelectorAll('.seg-tab-btn');
+  segBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      activeSegment = btn.dataset.seg;
+      segBtns.forEach(b => b.classList.toggle('active', b === btn));
+      if (cachedAnalytics) renderSegmentedTable(cachedAnalytics);
+    });
+  });
+
   // ── Analytics Tab ───────────────────────────────────────────────
 
   let drawdownChart = null;
@@ -75,6 +90,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!json.success) throw new Error(json.error || 'Analytics fetch failed');
       cachedAnalytics = json.data;
       renderPeriodTable(cachedAnalytics);
+      renderSegmentedTable(cachedAnalytics);
       renderAdvancedMetrics(cachedAnalytics);
       renderDrawdownChart(cachedAnalytics);
     } catch (err) {
@@ -129,6 +145,58 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     html += '</tbody></table>';
+    container.innerHTML = html;
+  }
+
+  function renderSegmentedTable(data) {
+    const container = document.getElementById('segmented-table-container');
+    if (!container) return;
+
+    let rows = [];
+    if (activeSegment === 'entryPhase') {
+      rows = data.byEntryPhase || [];
+    } else if (activeSegment === 'session') {
+      rows = data.bySession || [];
+    } else if (activeSegment === 'regime') {
+      rows = data.byMarketRegime || [];
+    }
+
+    if (!rows.length) {
+      container.innerHTML = '<p class="muted-text">No segmented data available.</p>';
+      return;
+    }
+
+    // Sort by PnL descending (most profitable first)
+    rows = [...rows].sort((a, b) => (b.pnl || 0) - (a.pnl || 0));
+
+    const fmt = (v, d = 2) => v != null ? Number(v).toFixed(d) : '--';
+    const fmtPct = (v) => v != null ? (Number(v) * 100).toFixed(1) + '%' : '--';
+
+    let html = `<table class="segmented-table">
+      <thead><tr>
+        <th>Segment</th><th>Trades</th><th>Win Rate</th><th>PF</th>
+        <th>PnL</th><th>Avg PnL</th>
+      </tr></thead><tbody>`;
+
+    for (const row of rows) {
+      if (row.key === 'unknown') continue;
+      const pnlClass = (row.pnl || 0) >= 0 ? 'positive' : 'negative';
+      const pfClass = row.profitFactor != null ? (row.profitFactor >= 1.0 ? 'pf-good' : 'pf-bad') : '';
+      const lowConf = (row.count || 0) < 5 ? 'low-confidence' : '';
+      html += `<tr class="${lowConf}">
+        <td>${row.key || '--'}</td>
+        <td>${row.count || 0}${lowConf ? ' *' : ''}</td>
+        <td>${fmtPct(row.winRate)}</td>
+        <td class="${pfClass}">${fmt(row.profitFactor)}</td>
+        <td class="${pnlClass}">$${fmt(row.pnl)}</td>
+        <td>$${fmt(row.avgPnl)}</td>
+      </tr>`;
+    }
+
+    html += '</tbody></table>';
+    if (rows.some(r => (r.count || 0) < 5 && r.key !== 'unknown')) {
+      html += '<p class="muted-text" style="margin-top:8px">* Low sample size (< 5 trades)</p>';
+    }
     container.innerHTML = html;
   }
 
@@ -204,6 +272,209 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
     });
+  }
+
+  // ── Suggestions ─────────────────────────────────────────────────
+
+  async function fetchAndRenderSuggestions() {
+    const container = document.getElementById('suggestions-container');
+    const badge = document.getElementById('suggestions-refresh-badge');
+    if (!container) return;
+
+    try {
+      const res = await fetch('/api/suggestions');
+      const json = await res.json();
+
+      if (!json.success) {
+        container.innerHTML = `<p class="muted-text">Error loading suggestions.</p>`;
+        return;
+      }
+
+      const data = json.data;
+
+      // Show refresh badge
+      if (badge && data.tradesSinceLastAnalysis != null) {
+        if (data.tradesSinceLastAnalysis >= 20) {
+          badge.textContent = `${data.tradesSinceLastAnalysis} new trades since last analysis`;
+          badge.style.color = 'var(--warn)';
+        } else {
+          badge.textContent = `${data.tradesSinceLastAnalysis} new trades`;
+          badge.style.color = '';
+        }
+      }
+
+      if (data.insufficient) {
+        container.innerHTML = `<p class="muted-text">${data.message} (${data.totalEntryChecks} checks so far)</p>`;
+        return;
+      }
+
+      const suggestions = data.suggestions || [];
+      if (suggestions.length === 0) {
+        container.innerHTML = `<p class="muted-text">No improvements found. Current thresholds appear optimal based on available data.</p>`;
+        return;
+      }
+
+      renderSuggestionCards(suggestions);
+    } catch (err) {
+      if (container) container.innerHTML = `<p class="muted-text">Error: ${err.message}</p>`;
+    }
+  }
+
+  function renderSuggestionCards(suggestions) {
+    const container = document.getElementById('suggestions-container');
+    if (!container) return;
+
+    const fmt = (v, d = 2) => v != null ? Number(v).toFixed(d) : '--';
+    const fmtPct = (v) => v != null ? (Number(v) * 100).toFixed(1) + '%' : '--';
+
+    let html = '';
+    suggestions.forEach((s, idx) => {
+      const confClass = `confidence-${s.confidence}`;
+
+      const wrChange = (s.projected.winRate != null && s.baseline.winRate != null)
+        ? s.projected.winRate - s.baseline.winRate : null;
+      const pfChange = (s.projected.profitFactor != null && s.baseline.profitFactor != null)
+        ? s.projected.profitFactor - s.baseline.profitFactor : null;
+      const tcChange = (s.projected.tradeCount != null && s.baseline.tradeCount != null && s.baseline.tradeCount > 0)
+        ? ((s.projected.tradeCount - s.baseline.tradeCount) / s.baseline.tradeCount * 100) : null;
+
+      html += `
+        <div class="suggestion-card ${confClass}">
+          <div class="suggestion-header">
+            <span class="confidence-dot ${s.confidence}"></span>
+            <span class="suggestion-param-name">${s.label}</span>
+          </div>
+          <div class="suggestion-values">
+            ${fmt(s.currentValue, 4)} <span class="arrow">&rarr;</span> ${fmt(s.suggestedValue, 4)}
+          </div>
+          <div class="blocker-freq-badge">Blocked ${s.blockerFrequency}% of entries</div>
+          <table class="suggestion-metrics-table">
+            <thead><tr><th></th><th>Current</th><th>Projected</th><th>Change</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>Win Rate</td>
+                <td>${fmtPct(s.baseline.winRate)}</td>
+                <td>${fmtPct(s.projected.winRate)}</td>
+                <td class="${wrChange != null && wrChange >= 0 ? 'suggestion-change-positive' : 'suggestion-change-negative'}">${wrChange != null ? (wrChange >= 0 ? '+' : '') + fmtPct(wrChange) : '--'}</td>
+              </tr>
+              <tr>
+                <td>PF</td>
+                <td>${fmt(s.baseline.profitFactor)}</td>
+                <td>${fmt(s.projected.profitFactor)}</td>
+                <td class="${pfChange != null && pfChange >= 0 ? 'suggestion-change-positive' : 'suggestion-change-negative'}">${pfChange != null ? (pfChange >= 0 ? '+' : '') + fmt(pfChange) : '--'}</td>
+              </tr>
+              <tr>
+                <td>Trades</td>
+                <td>${s.baseline.tradeCount || '--'}</td>
+                <td>${s.projected.tradeCount || '--'}</td>
+                <td class="${tcChange != null && tcChange >= 0 ? 'suggestion-change-positive' : 'suggestion-change-negative'}">${tcChange != null ? (tcChange >= 0 ? '+' : '') + tcChange.toFixed(0) + '%' : '--'}</td>
+              </tr>
+            </tbody>
+          </table>
+          <button class="apply-suggestion-btn" data-idx="${idx}">Apply</button>
+        </div>`;
+    });
+
+    container.innerHTML = html;
+
+    // Attach apply handlers
+    container.querySelectorAll('.apply-suggestion-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const idx = Number(btn.dataset.idx);
+        const s = suggestions[idx];
+        if (!s) return;
+
+        btn.disabled = true;
+        btn.textContent = 'Applying...';
+
+        try {
+          const res = await fetch('/api/suggestions/apply', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              configKey: s.configKey,
+              suggestedValue: s.suggestedValue,
+              projected: s.projected,
+            }),
+          });
+          const json = await res.json();
+          if (!res.ok || !json.success) throw new Error(json.error || 'Apply failed');
+
+          btn.textContent = 'Applied!';
+          btn.style.borderColor = 'var(--good)';
+
+          // Refresh suggestions and tracking
+          setTimeout(() => {
+            fetchAndRenderSuggestions();
+            fetchAndRenderTracking();
+          }, 500);
+        } catch (err) {
+          btn.textContent = 'Failed';
+          btn.style.borderColor = 'var(--bad)';
+          setTimeout(() => {
+            btn.textContent = 'Apply';
+            btn.disabled = false;
+            btn.style.borderColor = '';
+          }, 2000);
+        }
+      });
+    });
+  }
+
+  async function fetchAndRenderTracking() {
+    const card = document.getElementById('tracking-card');
+    const container = document.getElementById('tracking-container');
+    if (!card || !container) return;
+
+    try {
+      const res = await fetch('/api/suggestions/tracking');
+      const json = await res.json();
+      if (!json.success) return;
+
+      const tracking = json.data?.tracking || [];
+      if (tracking.length === 0) {
+        card.style.display = 'none';
+        return;
+      }
+
+      card.style.display = '';
+      const fmt = (v, d = 2) => v != null ? Number(v).toFixed(d) : '--';
+      const fmtPct = (v) => v != null ? (Number(v) * 100).toFixed(1) + '%' : '--';
+
+      let html = '';
+      for (const t of tracking) {
+        const statusClass = t.status === 'underperforming' ? 'status-badge-underperforming' : 'status-badge-ontrack';
+        const statusText = t.status === 'underperforming' ? 'Underperforming' : 'On Track';
+
+        html += `
+          <div class="tracking-record">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <span style="font-size:13px;font-weight:600;color:var(--text)">${t.configKey}</span>
+              <span class="status-badge ${statusClass}">${statusText}</span>
+            </div>
+            <div style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:6px">
+              Applied: ${fmt(t.suggestedValue, 4)} | Trades since: ${t.tradesSinceApply}
+            </div>
+            <table class="suggestion-metrics-table">
+              <thead><tr><th></th><th>Projected</th><th>Actual</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td>Win Rate</td>
+                  <td>${fmtPct(t.projected.winRate)}</td>
+                  <td>${fmtPct(t.actual.winRate)}</td>
+                </tr>
+                <tr>
+                  <td>PF</td>
+                  <td>${fmt(t.projected.profitFactor)}</td>
+                  <td>${fmt(t.actual.profitFactor)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>`;
+      }
+
+      container.innerHTML = html;
+    } catch { /* ignore */ }
   }
 
   // ── Optimizer Tab ───────────────────────────────────────────────

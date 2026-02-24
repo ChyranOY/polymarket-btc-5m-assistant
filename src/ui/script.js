@@ -15,6 +15,19 @@ document.addEventListener('DOMContentLoaded', () => {
   const kpiWinrate = document.getElementById('kpi-winrate');
   const kpiProfitFactor = document.getElementById('kpi-profit-factor');
 
+  // Phase 3: Kill-switch elements
+  const ksPnlLabel = document.getElementById('ks-pnl-label');
+  const ksProgressBar = document.getElementById('ks-progress-bar');
+  const ksBanner = document.getElementById('ks-banner');
+  const ksOverrideSection = document.getElementById('ks-override-section');
+  const ksOverrideBtn = document.getElementById('ks-override-btn');
+  const ksOverrideInfo = document.getElementById('ks-override-info');
+  const ksSyncIndicator = document.getElementById('ks-sync-indicator');
+
+  // Phase 3: Order lifecycle elements
+  const orderLifecycleCard = document.getElementById('order-lifecycle-card');
+  const orderLifecyclePanel = document.getElementById('order-lifecycle-panel');
+
   // ── Trading controls ──────────────────────────────────────────
   const startBtn = document.getElementById('start-trading');
   const stopBtn = document.getElementById('stop-trading');
@@ -100,6 +113,20 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (e) {
       console.error('Mode switch failed:', e);
     }
+  });
+
+  // Phase 3: Kill-switch override handler
+  ksOverrideBtn?.addEventListener('click', async () => {
+    if (!confirm('Override the kill-switch? Trading will resume with a reduced loss budget (10% buffer). This cannot be undone until the next daily reset.')) return;
+    try {
+      const res = await fetch('/api/kill-switch/override', { method: 'POST' });
+      const json = await res.json();
+      if (json.success) {
+        if (ksOverrideInfo) ksOverrideInfo.textContent = `Override #${json.data?.overrideCount ?? '?'} applied`;
+      } else {
+        alert(json.error || 'Override failed');
+      }
+    } catch (e) { console.error('Kill-switch override failed:', e); }
   });
 
   // top right pill (removed — replaced by trading controls)
@@ -538,6 +565,107 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         openTradeDiv.textContent = 'No open trade.';
         openTradeDiv.classList.add('closed');
+      }
+
+      // ── Phase 3: Kill-Switch Panel ──────────────────────────────
+      // Fields from TradingState.getKillSwitchStatus():
+      //   active (bool), overrideActive (bool), overrideCount (num),
+      //   todayPnl (num), limit (num), lastResetDate, overrideLog
+      const ks = statusData.killSwitch;
+      if (ks && ksPnlLabel) {
+        const dailyPnl = typeof ks.todayPnl === 'number' ? ks.todayPnl : 0;
+        const maxLoss = typeof ks.limit === 'number' ? Math.abs(ks.limit) : 0;
+
+        // PnL label
+        const pnlSign = dailyPnl >= 0 ? '+' : '';
+        ksPnlLabel.textContent = `Daily PnL: ${pnlSign}$${formatCurrency(dailyPnl)}` +
+          (maxLoss > 0 ? ` / -$${formatCurrency(maxLoss)} limit` : '');
+        ksPnlLabel.style.color = dailyPnl >= 0 ? 'var(--good)' : 'var(--bad)';
+
+        // Progress bar — shows how much of the daily loss budget has been consumed
+        if (ksProgressBar && maxLoss > 0) {
+          const consumed = Math.max(0, -dailyPnl);
+          const pct = Math.min(100, (consumed / maxLoss) * 100);
+          ksProgressBar.style.width = pct + '%';
+          ksProgressBar.classList.remove('ks-warn', 'ks-danger');
+          if (pct >= 100) {
+            ksProgressBar.classList.add('ks-danger');
+          } else if (pct >= 70) {
+            ksProgressBar.classList.add('ks-warn');
+          }
+        }
+
+        // Banner — triggered or overridden
+        if (ksBanner) {
+          if (ks.active && !ks.overrideActive) {
+            ksBanner.className = 'ks-banner ks-banner--active';
+            ksBanner.textContent = 'KILL-SWITCH ACTIVE — Trading halted';
+          } else if (ks.overrideActive) {
+            ksBanner.className = 'ks-banner ks-banner--overridden';
+            ksBanner.textContent = `KILL-SWITCH OVERRIDDEN (${ks.overrideCount || 1}x) — Reduced budget active`;
+          } else {
+            ksBanner.className = 'ks-banner ks-banner--hidden';
+          }
+        }
+
+        // Override button — only show when triggered and NOT yet overridden
+        if (ksOverrideSection) {
+          ksOverrideSection.style.display = (ks.active && !ks.overrideActive) ? '' : 'none';
+        }
+      } else if (ksPnlLabel) {
+        ksPnlLabel.textContent = 'Daily PnL: --';
+        ksPnlLabel.style.color = '';
+        if (ksProgressBar) ksProgressBar.style.width = '0%';
+        if (ksBanner) ksBanner.className = 'ks-banner ks-banner--hidden';
+        if (ksOverrideSection) ksOverrideSection.style.display = 'none';
+      }
+
+      // ── Phase 3: Order Lifecycle Panel ──────────────────────────
+      const olcOrders = statusData.orderLifecycle;
+      if (orderLifecycleCard && orderLifecyclePanel) {
+        if (Array.isArray(olcOrders) && olcOrders.length > 0) {
+          orderLifecycleCard.style.display = '';
+          const nowMs = Date.now();
+          const olcHtml = olcOrders.map(o => {
+            const oid = String(o.orderId || '').slice(0, 10);
+            const state = o.state || 'UNKNOWN';
+            const side = o.side || '';
+            // Compute age from SUBMITTED timestamp
+            const submittedMs = o.timestamps?.SUBMITTED;
+            const age = submittedMs ? Math.round((nowMs - submittedMs) / 1000) + 's' : '';
+            const fillInfo = o.fillRatio != null && o.fillRatio > 0 && o.fillRatio < 1
+              ? ` (${Math.round(o.fillRatio * 100)}% filled)` : '';
+            const errInfo = o.error ? ` ERR: ${o.error}` : '';
+            return `<div style="margin-bottom:6px">` +
+              `<span class="lifecycle-badge lifecycle-badge--${state}">${state}</span> ` +
+              `<span style="color:var(--muted)">${oid}${side ? ' ' + side : ''}${age ? ' ' + age : ''}${fillInfo}${errInfo}</span>` +
+              `</div>`;
+          }).join('');
+          orderLifecyclePanel.innerHTML = olcHtml;
+        } else {
+          orderLifecycleCard.style.display = 'none';
+          orderLifecyclePanel.textContent = 'No active orders.';
+        }
+      }
+
+      // ── Phase 3: Sync Indicator (Reconciliation) ────────────────
+      const recon = statusData.reconciliation;
+      if (ksSyncIndicator) {
+        if (recon) {
+          const syncStatus = recon.status || 'checking';
+          ksSyncIndicator.className = `sync-dot sync-dot--${syncStatus}`;
+          const discCount = Array.isArray(recon.discrepancies) ? recon.discrepancies.length : 0;
+          if (syncStatus === 'in_sync') {
+            ksSyncIndicator.title = 'Reconciliation: in sync';
+          } else if (syncStatus === 'discrepancy') {
+            ksSyncIndicator.title = `Reconciliation: ${discCount} discrepanc${discCount === 1 ? 'y' : 'ies'}`;
+          } else {
+            ksSyncIndicator.title = 'Reconciliation: checking';
+          }
+        } else {
+          ksSyncIndicator.className = 'sync-dot sync-dot--checking';
+          ksSyncIndicator.title = 'Reconciliation: no data';
+        }
       }
 
       // Ledger summary

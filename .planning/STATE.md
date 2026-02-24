@@ -1,8 +1,8 @@
 # Project State: Polymarket BTC 5m Assistant
 
 **Current Phase:** 2 — Profitability Optimization
-**Current Plan:** 1 of 2
-**Phase Status:** Not Started
+**Current Plan:** 2 of 2 (complete)
+**Phase Status:** Complete
 **Last Updated:** 2026-02-23
 
 ## Phase Progress
@@ -10,7 +10,7 @@
 | Phase | Name | Status | Started | Completed |
 |-------|------|--------|---------|-----------|
 | 1 | Analytics Foundation | Complete | 2026-02-23 | 2026-02-23 |
-| 2 | Profitability Optimization | Not Started | — | — |
+| 2 | Profitability Optimization | Complete | 2026-02-23 | 2026-02-23 |
 | 3 | Live Trading Hardening | Not Started | — | — |
 | 4 | Infrastructure & Monitoring | Not Started | — | — |
 | 5 | Integration & Polish | Not Started | — | — |
@@ -26,11 +26,14 @@
 - **Plan 01-02 complete:** Pure-function backtester replaying enriched trades with 6 configurable threshold overrides, POST /api/backtest endpoint with parameter whitelist
 - **Plan 01-03 complete:** Grid search optimizer testing exhaustive parameter combinations, three-tab dashboard UI (Dashboard/Analytics/Optimizer), one-click config apply/revert
 - **Phase 1 COMPLETE:** All 6 requirements satisfied (ANLYT-01..04, PROF-01..02)
+- **Plan 02-01 complete:** Segmented performance views — profitFactor in groupSummary, byMarketRegime grouping, 3-tab segmented UI (Entry Phase/Session/Market Regime)
+- **Plan 02-02 complete:** Suggestion engine — blocker-to-threshold mapping (9 patterns), backtest-validated generateSuggestions, suggestion API endpoints, suggestion cards UI with confidence traffic lights, post-apply tracking
+- **Phase 2 COMPLETE:** All 2 requirements satisfied (PROF-03, PROF-04)
 
 ### What's Next
-- Begin Phase 2: Profitability Optimization (PROF-03, PROF-04)
-- Win rate/PF segmented by entry phase, time of day, market conditions
-- Entry filter adjustment suggestions based on blocker diagnostics
+- Begin Phase 3: Live Trading Hardening (LIVE-01..05)
+- Full order lifecycle tracking (SUBMITTED -> FILLED -> EXITED)
+- Position reconciliation, fee-aware sizing, retry with backoff, PnL kill-switch
 
 ### Blockers
 - None
@@ -50,6 +53,12 @@
 - Minimum 30 trades per combination enforced to prevent overfitting
 - Tab-aware polling: only fetch active tab data to reduce unnecessary API calls
 - Config apply warns when live mode active; stores previous config for revert
+- Coarse 3-bucket RSI regime (Oversold/Ranging/Overbought) for market condition segmentation
+- Suggestion engine uses startsWith prefix matching for normalized blocker keys
+- Config key mapping in apply endpoint (maxSpreadThreshold->maxSpread, minSpotImpulse->minBtcImpulsePct1m)
+- Post-apply tracking flags underperforming at < 70% of projected PF
+- Minimum 100 entry checks required before generating suggestions (prevents noisy data)
+- Suggestions capped at top 3 by PF improvement to avoid overwhelming user
 
 ## Performance Metrics
 
@@ -58,6 +67,8 @@
 | 01-01 | ~25min | 2 | 6 |
 | 01-02 | ~15min | 2 | 4 |
 | 01-03 | ~20min | 3 | 7 |
+| 02-01 | ~15min | 2 | 5 |
+| 02-02 | ~20min | 3 | 6 |
 
 ## Session Log
 
@@ -69,6 +80,11 @@
 | 2026-02-23 | Plan 01-02 executed | Backtest harness -- pure backtester + API endpoint |
 | 2026-02-23 | Plan 01-03 executed | Grid search optimizer + three-tab dashboard UI + config apply/revert |
 | 2026-02-23 | Phase 1 complete | All 6 requirements (ANLYT-01..04, PROF-01..02) satisfied |
+| 2026-02-23 | Phase 2 context gathered | Created 02-CONTEXT.md — segmentation + suggestions + apply flow decisions |
+| 2026-02-23 | Plan 02-01 executed | Segmented performance views — profitFactor + byMarketRegime + 3-tab UI |
+| 2026-02-23 | Plan 02-02 executed | Suggestion engine — blocker mapping + backtest validation + suggestion cards UI |
+| 2026-02-23 | Phase 2 complete | All 2 requirements (PROF-03, PROF-04) satisfied |
+| 2026-02-23 | Phase 3 context gathered | Created 03-CONTEXT.md — order lifecycle, reconciliation, retry, kill-switch decisions |
 
 ---
-*Last updated: 2026-02-23 after completing Plan 01-03 (Phase 1 complete)*
+*Last updated: 2026-02-23 after Phase 3 context gathering*
