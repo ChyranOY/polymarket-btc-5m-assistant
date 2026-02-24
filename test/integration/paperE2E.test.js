@@ -114,15 +114,15 @@ function makeSignals(overrides = {}) {
     modelUp: 0.62,
     modelDown: 0.38,
     predictNarrative: 'LONG',
-    polyPrices: { UP: 0.004, DOWN: 0.996 },
-    polyPricesCents: { UP: 0.4, DOWN: 99.6 },
+    polyPrices: { UP: 0.56, DOWN: 0.44 },
+    polyPricesCents: { UP: 0.56, DOWN: 0.44 },
     polyMarketSnapshot: {
       ok: true,
       market: { slug: 'test-market-001', liquidityNum: 50000, volumeNum: 10000, endDate: new Date(Date.now() + 5 * 60_000).toISOString() },
-      prices: { up: 0.4, down: 99.6 },
+      prices: { up: 0.56, down: 0.44 },
       orderbook: {
-        up: { bestAsk: 0.004, bestBid: 0.003, spread: 0.001 },
-        down: { bestAsk: 0.996, bestBid: 0.995, spread: 0.001 },
+        up: { bestAsk: 0.565, bestBid: 0.555, spread: 0.01 },
+        down: { bestAsk: 0.445, bestBid: 0.435, spread: 0.01 },
       },
     },
     market: { slug: 'test-market-001', liquidityNum: 50000 },
@@ -130,6 +130,7 @@ function makeSignals(overrides = {}) {
       rsiNow: 55,
       rsiSlope: 0.5,
       macd: { value: 0.001, hist: 0.0005, signal: 0.0005, histDelta: 0.0001 },
+      vwapNow: 95010,
       vwapSlope: 0.5,
       vwapDist: 0.001,
       heikenColor: 'green',
@@ -160,8 +161,8 @@ function makeConfig(overrides = {}) {
     maxSpread: 0.012,
     minPolyPrice: 0.002,
     maxPolyPrice: 0.98,
-    maxEntryPolyPrice: 0.01,
-    minOppositePolyPrice: 0.002,
+    maxEntryPolyPrice: 0.85,
+    minOppositePolyPrice: 0.05,
     minRangePct20: 0.001,
     minModelMaxProb: 0.53,
     noTradeRsiMin: 30,
@@ -213,7 +214,7 @@ test('E2E Paper: full trade lifecycle (entry -> mark -> exit)', async () => {
     // Force a near-settlement signal to trigger exit
     const exitSignals = makeSignals({
       timeLeftMin: 0.5,
-      polyPrices: { UP: 0.003, DOWN: 0.997 },
+      polyPrices: { UP: 0.30, DOWN: 0.70 },
     });
 
     await engine.processSignals(exitSignals, klines);
@@ -286,9 +287,9 @@ test('E2E Paper: analytics produces valid output from trades', () => {
 
   assert.ok(analytics, 'Analytics should return a result');
   assert.ok(analytics.overview, 'Should have overview section');
-  assert.strictEqual(analytics.overview.totalTrades, 3, 'Should count 3 trades');
+  assert.strictEqual(analytics.overview.closedTrades, 3, 'Should count 3 trades');
   assert.ok(analytics.overview.winRate > 0, 'Win rate should be positive (2 wins out of 3)');
-  assert.ok(analytics.overview.totalPnl > 0, 'Net PnL should be positive ($5 + $8 - $3 = $10)');
+  assert.ok(analytics.overview.totalPnL > 0, 'Net PnL should be positive ($5 + $8 - $3 = $10)');
 });
 
 test('E2E Paper: entry blockers fire correctly for insufficient probability', () => {

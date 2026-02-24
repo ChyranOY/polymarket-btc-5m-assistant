@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "ui-preview",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["exec", "--", "node", "-e", "const h=require('http'),f=require('fs'),p=require('path'),m={'html':'text/html','css':'text/css','js':'text/javascript'};h.createServer((q,r)=>{let u=q.url==='/'?'/index.html':q.url;let fp=p.join('src/ui',u);f.readFile(fp,(e,d)=>{if(e){r.writeHead(404);r.end('Not found');return}r.writeHead(200,{'Content-Type':m[p.extname(fp).slice(1)]||'text/plain'});r.end(d)})}).listen(3456,()=>console.log('Static server on 3456'))"],
+      "runtimeExecutable": "/Users/elijahprince/.nvm/versions/node/v22.22.0/bin/node",
+      "runtimeArgs": ["-e", "const h=require('http'),f=require('fs'),p=require('path'),m={'html':'text/html','css':'text/css','js':'text/javascript'};h.createServer((q,r)=>{let u=q.url==='/'?'/index.html':q.url;let fp=p.join('src/ui',u);f.readFile(fp,(e,d)=>{if(e){r.writeHead(404);r.end('Not found');return}r.writeHead(200,{'Content-Type':m[p.extname(fp).slice(1)]||'text/plain'});r.end(d)})}).listen(3456,()=>console.log('Static server on 3456'))"],
       "port": 3456
     }
   ]

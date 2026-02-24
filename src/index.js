@@ -498,11 +498,13 @@ async function startApp() {
     const regimeInfo = detectRegime({ ...engineInputs, vwapDist: indicatorsData.vwapDist ?? null, vwapCrossCount: indicatorsData.vwapCrossCount ?? null });
     const scored = scoreDirection(engineInputs);
     const timeAware = applyTimeAwareness(scored.rawUp, timeLeftMin, CONFIG.candleWindowMinutes);
-    const marketUp = polySnapshot.ok ? polySnapshot.prices?.up : null;   // cents (buy)
-    const marketDown = polySnapshot.ok ? polySnapshot.prices?.down : null; // cents (buy)
+    const marketUp = polySnapshot.ok ? polySnapshot.prices?.up : null;   // decimal (0.56 = 56%)
+    const marketDown = polySnapshot.ok ? polySnapshot.prices?.down : null; // decimal (0.56 = 56%)
+    // CLOB /price and Gamma API both return prices in decimal (0–1) range.
+    // Do NOT divide by 100 — they are already in the correct unit.
     const polyPrices = {
-      UP: (marketUp === null || marketUp === undefined) ? null : Number(marketUp) / 100,
-      DOWN: (marketDown === null || marketDown === undefined) ? null : Number(marketDown) / 100
+      UP: (marketUp === null || marketUp === undefined) ? null : Number(marketUp),
+      DOWN: (marketDown === null || marketDown === undefined) ? null : Number(marketDown)
     };
     const edge = computeEdge({ modelUp: timeAware.adjustedUp, modelDown: timeAware.adjustedDown, marketYes: marketUp, marketNo: marketDown });
     const rec = decide({ remainingMinutes: timeLeftMin, edgeUp: edge.edgeUp, edgeDown: edge.edgeDown, modelUp: timeAware.adjustedUp, modelDown: timeAware.adjustedDown });

@@ -141,13 +141,14 @@ export function computeEntryBlockers(signals, config, state, candleCount) {
   const obDownAsk = poly?.orderbook?.down?.bestAsk;
   const obDownBid = poly?.orderbook?.down?.bestBid;
 
+  // Orderbook prices are already decimal (0–1). No multiplication needed.
   const fallbackUp =
-    isNum(obUpAsk) && obUpAsk > 0 ? obUpAsk * 100
-      : isNum(obUpBid) && obUpBid > 0 ? obUpBid * 100
+    isNum(obUpAsk) && obUpAsk > 0 ? obUpAsk
+      : isNum(obUpBid) && obUpBid > 0 ? obUpBid
         : null;
   const fallbackDown =
-    isNum(obDownAsk) && obDownAsk > 0 ? obDownAsk * 100
-      : isNum(obDownBid) && obDownBid > 0 ? obDownBid * 100
+    isNum(obDownAsk) && obDownAsk > 0 ? obDownAsk
+      : isNum(obDownBid) && obDownBid > 0 ? obDownBid
         : null;
 
   const upC = isNum(rawUpC) && rawUpC > 0 ? rawUpC : fallbackUp;
@@ -157,9 +158,10 @@ export function computeEntryBlockers(signals, config, state, candleCount) {
   const downCok = isNum(downC) && downC > 0;
   const polyPricesSane = upCok && downCok;
 
+  // All price sources (CLOB, Gamma, orderbook) return decimal (0–1). No division needed.
   const effectivePolyPrices = {
-    UP: upCok ? upC / 100 : null,
-    DOWN: downCok ? downC / 100 : null,
+    UP: upCok ? upC : null,
+    DOWN: downCok ? downC : null,
   };
 
   const currentPolyPrice = effectivePolyPrices[effectiveSide];

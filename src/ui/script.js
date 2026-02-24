@@ -438,7 +438,11 @@ document.addEventListener('DOMContentLoaded', () => {
       // After a user action POST, we enter "seeking mode" — poll without
       // locking until we find an instance whose tradingEnabled matches
       // our local UI state, then lock to that instance.
+      // Instance locking: skip STATUS rendering from wrong instances, but
+      // always fall through to the trades section (prevents data flashing
+      // when load balancer alternates between instances).
       const respInstanceId = statusData?.status?._instanceId;
+      let _skipStatusRender = false;
       if (_seekingInstance) {
         _seekingPollCount++;
         const localEnabled = tradingStatusEl?.textContent === 'ACTIVE';
@@ -446,51 +450,46 @@ document.addEventListener('DOMContentLoaded', () => {
         const localMode = (modeSelect?.value || 'paper').toUpperCase();
         const serverMode = (statusData.mode || 'PAPER').toUpperCase();
         if (localEnabled === serverEnabled && localMode === serverMode) {
-          // Found the instance that matches our local state — lock to it
           _lockedInstanceId = respInstanceId;
           _foreignInstanceCount = 0;
           _seekingInstance = false;
         } else if (_seekingPollCount >= _SEEKING_TIMEOUT_POLLS) {
-          // Timeout — accept this instance to avoid UI freeze.
-          // Dropdown remains source of truth for all rendering.
           console.warn(`[UI] Seeking mode timed out after ${_seekingPollCount} polls, accepting instance ${respInstanceId}`);
           _lockedInstanceId = respInstanceId;
           _foreignInstanceCount = 0;
           _seekingInstance = false;
         } else {
-          // Wrong instance — skip, try next poll
-          return;
+          _skipStatusRender = true; // wrong instance — skip status, but still fetch trades
         }
       } else if (_lockedInstanceId === null) {
-        // First poll (or re-entering after seeking set lock to null).
-        // After initial sync, validate mode+trading match before locking.
         if (_initialSyncDone) {
           const localEnabled = tradingStatusEl?.textContent === 'ACTIVE';
           const serverEnabled = statusData.tradingEnabled ?? false;
           const localMode = (modeSelect?.value || 'paper').toUpperCase();
           const serverMode = (statusData.mode || 'PAPER').toUpperCase();
           if (localEnabled !== serverEnabled || localMode !== serverMode) {
-            return; // skip — wrong instance
+            _skipStatusRender = true; // wrong instance — skip status, but still fetch trades
           }
         }
-        _lockedInstanceId = respInstanceId;
-        _foreignInstanceCount = 0;
+        if (!_skipStatusRender) {
+          _lockedInstanceId = respInstanceId;
+          _foreignInstanceCount = 0;
+        }
       } else if (respInstanceId && respInstanceId !== _lockedInstanceId) {
         _foreignInstanceCount++;
         if (_foreignInstanceCount >= _INSTANCE_SWITCH_THRESHOLD) {
-          // Original instance is gone. Enter seeking mode so the next lock
-          // must pass mode + tradingEnabled validation (not blind switch).
           console.warn(`[UI] Lost instance ${_lockedInstanceId}, entering seeking mode`);
           _lockedInstanceId = null;
           _foreignInstanceCount = 0;
           _seekingInstance = true;
-          return;
-        } else {
-          return;
         }
+        _skipStatusRender = true; // foreign instance — skip status, but still fetch trades
       } else {
         _foreignInstanceCount = 0;
       }
+
+      // If wrong instance, skip status rendering but continue to trades section
+      if (_skipStatusRender) throw new Error('__skip_status__');
 
       lastStatusCache = statusData;
 
@@ -861,11 +860,18 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
     } catch (error) {
-      const msg = (error && error.message) ? error.message : String(error);
-      statusMessage.textContent = `Error loading status data: ${msg}`;
-      openTradeDiv.textContent = `Error loading trade data: ${msg}`;
-      ledgerSummaryDiv.textContent = `Error loading summary data: ${msg}`;
-      console.error('Error fetching status data:', error);
+      // __skip_status__ = instance locking skip — fall through to trades silently
+      if (error?.message !== '__skip_status__') {
+        // On transient fetch errors, preserve last good UI data instead of
+        // overwriting with error messages (prevents flash/flicker with load-balanced instances).
+        console.error('Error fetching status data:', error);
+        if (!lastStatusCache) {
+          const msg = (error && error.message) ? error.message : String(error);
+          statusMessage.textContent = `Error loading status data: ${msg}`;
+          openTradeDiv.textContent = `Error loading trade data: ${msg}`;
+          ledgerSummaryDiv.textContent = `Error loading summary data: ${msg}`;
+        }
+      }
     }
 
     // ---- trades ----
@@ -940,8 +946,12 @@ document.addEventListener('DOMContentLoaded', () => {
       renderTradesTable();
 
     } catch (error) {
-      recentTradesBody.innerHTML = '<tr><td colspan="8">Error loading trades.</td></tr>';
+      // On transient errors, preserve last good trades data (prevents flashing).
       console.error('Error fetching trades:', error);
+      if (!lastTradesCache || lastTradesCache.length === 0) {
+        recentTradesBody.innerHTML = '<tr><td colspan="8">Error loading trades.</td></tr>';
+      }
+      // else: keep last rendered trades visible
     }
   };
 

@@ -239,11 +239,12 @@ export class TradingEngine {
     const obUpAsk = poly?.orderbook?.up?.bestAsk;
     const obDownAsk = poly?.orderbook?.down?.bestAsk;
 
+    // CLOB /price and Gamma API both return decimal (0–1). No division needed.
     const upPrice = isNum(rawUpC) && rawUpC > 0
-      ? rawUpC / 100
+      ? rawUpC
       : (isNum(obUpAsk) && obUpAsk > 0 ? obUpAsk : null);
     const downPrice = isNum(rawDownC) && rawDownC > 0
-      ? rawDownC / 100
+      ? rawDownC
       : (isNum(obDownAsk) && obDownAsk > 0 ? obDownAsk : null);
 
     const entryPrice = effectiveSide === 'UP' ? upPrice : downPrice;

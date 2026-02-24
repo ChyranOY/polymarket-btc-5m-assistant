@@ -292,14 +292,15 @@ export class PaperExecutor extends OrderExecutor {
       const obDown = poly?.orderbook?.down;
 
       // For marking, use the sell-side price (bid) since that's what we'd get if we sold
+      // CLOB /price and Gamma API both return decimal (0–1). No division needed.
       let mark = null;
       if (p.side === 'UP') {
         mark = isNum(rawUpC) && rawUpC > 0
-          ? rawUpC / 100
+          ? rawUpC
           : (isNum(obUp?.bestBid) && obUp.bestBid > 0 ? obUp.bestBid : null);
       } else {
         mark = isNum(rawDownC) && rawDownC > 0
-          ? rawDownC / 100
+          ? rawDownC
           : (isNum(obDown?.bestBid) && obDown.bestBid > 0 ? obDown.bestBid : null);
       }
 
