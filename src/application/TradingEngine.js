@@ -46,6 +46,57 @@ export class TradingEngine {
    */
   async initialize() {
     await this.executor.initialize();
+    await this.seedDailyPnl();
+  }
+
+  /**
+   * Seed todayRealizedPnl from Supabase trades so kill-switch works after deploy.
+   */
+  async seedDailyPnl() {
+    if (!globalThis.__tradeStore_getTradeStore) return;
+    try {
+      const store = globalThis.__tradeStore_getTradeStore();
+      if (!store.getTradesByDateRange) return;
+
+      // Get today's date in Pacific time
+      const now = new Date();
+      const todayPT = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Los_Angeles',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(now);
+
+      // Use midnight PT as the start of day (PST = UTC-8, PDT = UTC-7)
+      // Approximate: search from 8 hours ago at midnight to be safe for both
+      const todayStart = todayPT + 'T00:00:00.000Z'; // Will be ~8h early, but safe
+      const trades = await store.getTradesByDateRange(todayStart, now.toISOString());
+
+      let todayPnl = 0;
+      for (const t of trades) {
+        if (t.status === 'CLOSED' && typeof t.pnl === 'number') {
+          // Only count trades whose exitTime is today PT
+          const exitDate = t.exitTime
+            ? new Intl.DateTimeFormat('en-CA', {
+              timeZone: 'America/Los_Angeles',
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit',
+            }).format(new Date(t.exitTime))
+            : null;
+          if (exitDate === todayPT) {
+            todayPnl += t.pnl;
+          }
+        }
+      }
+
+      if (todayPnl !== 0) {
+        this.state.todayRealizedPnl = todayPnl;
+        console.log(`[TradingEngine] Seeded daily PnL from Supabase: $${todayPnl.toFixed(2)}`);
+      }
+    } catch (e) {
+      console.warn('[TradingEngine] Failed to seed daily PnL:', e?.message);
+    }
   }
 
   /**

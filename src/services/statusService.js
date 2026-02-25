@@ -18,19 +18,34 @@ export async function assembleStatus() {
   const engine = globalThis.__tradingEngine ?? null;
   const modeManager = globalThis.__modeManager ?? null;
 
-  const ledgerData = getLedger();
   const openTrade = getOpenTrade();
 
   // Entry debug from unified engine
   const entryDebug = engine?.lastEntryStatus ?? null;
   const blockerSummary = engine?.state?.getBlockerSummary?.(10) ?? null;
 
-  const summary = ledgerData.summary ?? recalculateSummary(ledgerData.trades ?? []);
+  // Try Supabase trade store first (survives deploys), fall back to JSON ledger
+  let trades = [];
+  let meta = { realizedOffset: 0 };
+  if (globalThis.__tradeStore_getTradeStore) {
+    try {
+      const store = globalThis.__tradeStore_getTradeStore();
+      trades = await store.getAllTrades();
+      const storeMeta = store.getMeta();
+      if (storeMeta) meta = storeMeta;
+    } catch { /* fallback below */ }
+  }
+  if (trades.length === 0) {
+    const ledgerData = getLedger();
+    trades = ledgerData.trades ?? [];
+    meta = ledgerData.meta ?? { realizedOffset: 0 };
+  }
+  const summary = recalculateSummary(trades);
 
   const starting = CONFIG.paperTrading.startingBalance ?? 1000;
   const baseRealized = typeof summary.totalPnL === 'number' ? summary.totalPnL : 0;
-  const offset = (ledgerData.meta && typeof ledgerData.meta.realizedOffset === 'number' && Number.isFinite(ledgerData.meta.realizedOffset))
-    ? ledgerData.meta.realizedOffset
+  const offset = (meta && typeof meta.realizedOffset === 'number' && Number.isFinite(meta.realizedOffset))
+    ? meta.realizedOffset
     : 0;
   const realized = baseRealized + offset;
   const balance = starting + realized;

@@ -214,6 +214,17 @@ export class SupabaseTradeStore {
    * Get first open trade (replaces getOpenTrade()).
    * @returns {Object|null}
    */
+  async getTradesByDateRange(from, to) {
+    const { data, error } = await this.client
+      .from("trades")
+      .select("*")
+      .gte("timestamp", from)
+      .lte("timestamp", to)
+      .order("timestamp", { ascending: true });
+    if (error) throw new Error("[SupabaseTradeStore] getTradesByDateRange failed: " + error.message);
+    return (data || []).map(r => this._rowToTrade(r));
+  }
+
   async getFirstOpenTrade() {
     const trades = await this.getOpenTrades();
     return trades.length > 0 ? trades[0] : null;
