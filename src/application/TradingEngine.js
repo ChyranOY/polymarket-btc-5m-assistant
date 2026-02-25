@@ -133,6 +133,14 @@ export class TradingEngine {
           modelDownAtExit: signals?.modelDown ?? null,
         };
 
+        // Write MFE/MAE to executor trade record before closing
+        if (this.executor.openTrade) {
+          const trackedMfe = this.state.getMaxUnrealized(posId);
+          const trackedMae = this.state.getMinUnrealized(posId);
+          if (trackedMfe !== null) this.executor.openTrade.maxUnrealizedPnl = trackedMfe;
+          if (trackedMae !== null) this.executor.openTrade.minUnrealizedPnl = trackedMae;
+        }
+
         try {
           const closeResult = await this.executor.closePosition({
             tradeId: p.id,

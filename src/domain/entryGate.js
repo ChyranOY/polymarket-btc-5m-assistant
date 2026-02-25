@@ -175,6 +175,15 @@ export function computeEntryBlockers(signals, config, state, candleCount) {
     blockers.push('Market data sanity: invalid Polymarket prices (gamma 0/NaN and no valid orderbook quotes)');
   }
 
+  // ── 3b. Candle freshness ───────────────────────────────────────
+  const lastKline = signals.kline ?? null;
+  if (lastKline) {
+    const klineTs = lastKline.t ?? lastKline.openTime ?? null;
+    if (isNum(klineTs) && (Date.now() - klineTs) > 120_000) {
+      blockers.push("Stale candle data (last candle >2m old)");
+    }
+  }
+
   // ── 4. Settlement time gate ─────────────────────────────────────
   const endDate = signals.market?.endDate ?? poly?.market?.endDate ?? null;
   const settlementLeftMin = endDate
@@ -348,6 +357,17 @@ export function computeEntryBlockers(signals, config, state, candleCount) {
     }
   }
 
+  // ── 19b. RSI overbought/oversold directional filter ─────────────
+  const noTradeRsiOverbought = config.noTradeRsiOverbought ?? 78;
+  const noTradeRsiOversold = config.noTradeRsiOversold ?? 22;
+
+  if (isNum(rsiNow) && effectiveSide === "UP" && rsiNow > noTradeRsiOverbought) {
+    blockers.push(`RSI overbought for UP entry (RSI ${rsiNow.toFixed(1)} > ${noTradeRsiOverbought})`);
+  }
+  if (isNum(rsiNow) && effectiveSide === "DOWN" && rsiNow < noTradeRsiOversold) {
+    blockers.push(`RSI oversold for DOWN entry (RSI ${rsiNow.toFixed(1)} < ${noTradeRsiOversold})`);
+  }
+
   // ── 20. Polymarket price bounds ────────────────────────────────
   const minPoly = config.minPolyPrice ?? 0.002;
   const maxPoly = config.maxPolyPrice ?? 0.98;
@@ -517,7 +537,7 @@ export function computeEntryGateEvaluation(signals, config, state, candleCount) 
     margins.impulse = null;
   }
 
-  const totalChecks = 25;
+  const totalChecks = 27;
   const failedCount = blockers.length;
   const passedCount = totalChecks - failedCount;
 

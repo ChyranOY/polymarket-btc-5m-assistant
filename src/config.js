@@ -119,9 +119,9 @@ export const CONFIG = {
     // Example: $80 trade * 0.20 = $16 max loss; $250 trade * 0.20 = $40 (ceiling).
     dynamicStopLossEnabled:
       (process.env.DYNAMIC_STOP_LOSS_ENABLED || 'true').toLowerCase() === 'true',
-    dynamicStopLossPct: Number(process.env.DYNAMIC_STOP_LOSS_PCT) || 0.20,
+    dynamicStopLossPct: Number(process.env.DYNAMIC_STOP_LOSS_PCT) || 0.12,
     minMaxLossUsd: Number(process.env.MIN_MAX_LOSS_USD) || 8,
-    maxMaxLossUsd: Number(process.env.MAX_MAX_LOSS_USD) || 40,
+    maxMaxLossUsd: Number(process.env.MAX_MAX_LOSS_USD) || 20,
 
     // Max-loss grace (optional): when pnl breaches -maxLossUsdPerTrade, allow a short grace window
     // to recover (helps avoid wick/chop stop-outs) *only when conditions are supportive*.
@@ -178,9 +178,9 @@ export const CONFIG = {
     trailingTakeProfitEnabled:
       (process.env.TRAILING_TAKE_PROFIT_ENABLED || 'true').toLowerCase() ===
       'true',
-    trailingStartUsd: Number(process.env.TRAILING_TAKE_PROFIT_START_USD) || 20,
+    trailingStartUsd: Number(process.env.TRAILING_TAKE_PROFIT_START_USD) || 3,
     trailingDrawdownUsd:
-      Number(process.env.TRAILING_TAKE_PROFIT_DRAWDOWN_USD) || 10,
+      Number(process.env.TRAILING_TAKE_PROFIT_DRAWDOWN_USD) || 1.50,
 
     // Legacy/unused
     takeProfitPct: Number(process.env.TAKE_PROFIT_PCT) || 0.08,
@@ -268,6 +268,10 @@ export const CONFIG = {
     // RSI consolidation/regime filter: enabled for profitability (avoid bad band)
     noTradeRsiMin: Number(process.env.NO_TRADE_RSI_MIN) || 30,
     noTradeRsiMax: Number(process.env.NO_TRADE_RSI_MAX) || 45,
+
+    // RSI overbought/oversold directional filter
+    noTradeRsiOverbought: Number(process.env.NO_TRADE_RSI_OVERBOUGHT) || 78,
+    noTradeRsiOversold: Number(process.env.NO_TRADE_RSI_OVERSOLD) || 22,
 
     // Time filters
     // For 5m, avoid new entries too close to settlement (rollover risk)

@@ -2,6 +2,22 @@
 
 All notable changes to Polymarket BTC 5m Assistant are documented in this file.
 
+## [1.0.4] - 2026-02-25
+
+### Fixed
+
+- **MFE/MAE not persisting to trade records**: Trailing take-profit tracked MFE/MAE in TradingState but never wrote values back to the executor openTrade before closing. Trade journal entries were missing maxUnrealizedPnl/minUnrealizedPnl data. Now writes tracked MFE/MAE to executor trade record immediately before closePosition call.
+
+### Changed
+
+- **Trailing take-profit defaults tightened**: trailingStartUsd $20 -> $3 (activate trailing after +$3 instead of +$20), trailingDrawdownUsd $10 -> $1.50 (exit if drops $1.50 from peak instead of $10). Captures small wins on 5m contracts instead of waiting for rare large moves.
+- **Dynamic stop loss defaults tightened**: dynamicStopLossPct 0.20 -> 0.12 (max loss ~$9.60 per $80 trade instead of ~$16), maxMaxLossUsd $40 -> $20 (absolute ceiling halved). Reduces single-trade damage to protect bankroll.
+
+### Added
+
+- **RSI overbought/oversold directional entry blocker**: Blocks UP entries when RSI > 78 (overbought, likely to reverse down) and DOWN entries when RSI < 22 (oversold, likely to reverse up). Configurable via noTradeRsiOverbought/noTradeRsiOversold in config.
+- **Stale candle data entry blocker**: Blocks entries when the most recent 1m candle is older than 2 minutes. Prevents trading on stale/delayed price data that could lead to adverse fills.
+
 ## [1.0.3] - 2026-02-24
 
 ### Changed
