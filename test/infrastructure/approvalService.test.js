@@ -52,6 +52,7 @@ test('getStatus: returns conditional status after manual population', () => {
 
 test('checkAndApproveCollateral: returns failed when no client', async () => {
   const svc = new ApprovalService();
+  svc._getClient = () => null; // Force no-client path
   const result = await svc.checkAndApproveCollateral();
 
   assert.equal(result.state, 'failed');
@@ -71,6 +72,7 @@ test('checkAndApproveConditional: returns failed for empty tokenId', async () =>
 
 test('checkAndApproveConditional: returns failed when no client', async () => {
   const svc = new ApprovalService();
+  svc._getClient = () => null; // Force no-client path
   const result = await svc.checkAndApproveConditional('token_xyz');
 
   assert.equal(result.state, 'failed');
@@ -108,6 +110,7 @@ test('checkAndApproveConditional: force bypasses cooldown', async () => {
   });
   svc._lastCheckByToken.set('token_force', Date.now());
 
+  svc._getClient = () => null; // Force no-client path
   // Force re-check — will fail because no client, but should not use cached
   const result = await svc.checkAndApproveConditional('token_force', { force: true });
   // Without a real client, it fails

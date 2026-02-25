@@ -297,7 +297,7 @@ test('conditional stop loss triggers when hit AND opposing likely', () => {
   // Position is UP, modelDown is dominant → opposingMoreLikely = true
   // But we need the stop loss to be hit: pnl -30 <= -(110*0.25) = -27.5 ✓
   // And opposing: downP=0.60 >= 0.55 && downP >= upP + 0.03 → 0.60 >= 0.43 ✓
-  const config = cfg({ stopLossEnabled: true, stopLossPct: 0.25 });
+  const config = cfg({ stopLossEnabled: true, stopLossPct: 0.25, dynamicStopLossEnabled: false, maxLossUsdPerTrade: 999 });
   const { decision } = evaluateExits(p, signals, config, grace(), NOW);
   assert.ok(decision);
   assert.equal(decision.reason, 'Stop Loss');
@@ -310,7 +310,7 @@ test('conditional stop loss does not trigger without opposing flip', () => {
   });
   // UP position, model still supports UP
   const signals = sig({ modelUp: 0.58, modelDown: 0.42 });
-  const config = cfg({ stopLossEnabled: true, stopLossPct: 0.25 });
+  const config = cfg({ stopLossEnabled: true, stopLossPct: 0.25, dynamicStopLossEnabled: false, maxLossUsdPerTrade: 999 });
   const { decision } = evaluateExits(p, signals, config, grace(), NOW);
   // stopLossHit but opposing NOT likely → no exit
   assert.equal(decision, null);

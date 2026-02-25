@@ -66,6 +66,7 @@ test('getSnapshot: includes totals and capped fills', () => {
 
 test('poll: returns empty when no client', async () => {
   const ft = new FillTracker();
+  ft._getClient = () => null; // Force no-client path
   const fills = await ft.poll();
   assert.deepEqual(fills, []);
 });

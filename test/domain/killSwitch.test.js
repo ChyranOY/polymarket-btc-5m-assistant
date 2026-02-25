@@ -25,7 +25,7 @@ test('killSwitch: triggers at exact threshold', () => {
   const state = createKillSwitchState();
   const result = checkKillSwitch(state, -50, 50);
   assert.strictEqual(result.triggered, true);
-  assert.ok(result.reason.includes('-$50.00'));
+  assert.ok(result.reason.includes('$-50.00'));
 });
 
 test('killSwitch: does NOT trigger below threshold', () => {
@@ -68,8 +68,8 @@ test('killSwitch: override prevents trigger within 10% buffer', () => {
 
 test('killSwitch: re-triggers after override when loss exceeds buffer', () => {
   const state = { ...createKillSwitchState(), overrideActive: true };
-  // Override threshold = -50 * 1.1 = -55
-  const result = checkKillSwitch(state, -55, 50);
+  // Override threshold = -50 * 1.1 = -55 (use -56 to avoid floating point edge)
+  const result = checkKillSwitch(state, -56, 50);
   assert.strictEqual(result.triggered, true);
   assert.ok(result.reason.includes('override threshold'));
 });

@@ -17,7 +17,8 @@ function happySignals(overrides = {}) {
     modelUp: 0.60,
     modelDown: 0.40,
     timeLeftMin: 3.0,
-    polyPricesCents: { UP: 55, DOWN: 45 },
+    polyPricesCents: { UP: 0.55, DOWN: 0.45 },
+    kline: { t: Date.now() - 30_000, open: 65000, high: 65100, low: 64900, close: 65050 },
     polyMarketSnapshot: {
       orderbook: {
         up: { bestAsk: 0.56, bestBid: 0.54, spread: 0.02 },
@@ -69,6 +70,17 @@ function happyConfig(overrides = {}) {
     lossCooldownSeconds: 0,
     winCooldownSeconds: 0,
     skipMarketAfterMaxLoss: false,
+    noTradeRsiOverbought: 78,
+    noTradeRsiOversold: 22,
+    minBtcImpulsePct1m: 0.0001,
+    minRangePct20: 0,
+    minModelMaxProb: 0.50,
+    noTradeRsiMin: 30,
+    noTradeRsiMax: 45,
+    maxEntryPolyPrice: 0.99,
+    minOppositePolyPrice: 0.01,
+    maxDailyLossUsd: 9999,
+    circuitBreakerConsecutiveLosses: 99,
     ...overrides,
   };
 }
