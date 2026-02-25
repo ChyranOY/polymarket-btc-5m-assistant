@@ -534,7 +534,17 @@ async function startApp() {
       timeLeftMin, btcPrice: currentPrice, spotPrice: spotNow, spotDelta1mPct,
       modelUp: timeAware.adjustedUp, modelDown: timeAware.adjustedDown, narrative: predictNarrative,
       polyUp: polyPrices.UP, polyDown: polyPrices.DOWN, candleCount: klines1m?.length ?? 0,
-      lastUpdate: new Date().toISOString()
+      lastUpdate: new Date().toISOString(),
+      // Live gate values for threshold comparison
+      rsiNow: indicatorsData.rsiNow ?? null,
+      rangePct20: indicatorsData.rangePct20 ?? null,
+      spreadUp: polySnapshot?.orderbook?.up?.spread ?? null,
+      spreadDown: polySnapshot?.orderbook?.down?.spread ?? null,
+      liquidityNum: polySnapshot.ok ? (polySnapshot.market?.liquidityNum ?? null) : null,
+      recAction: rec.action ?? null,
+      recSide: rec.side ?? null,
+      recPhase: rec.phase ?? null,
+      recEdge: rec.edge ?? null,
     };
 
     // Refresh market cache for executor's getMarket() thunk

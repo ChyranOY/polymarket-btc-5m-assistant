@@ -548,76 +548,196 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const entryDbg = statusData.entryDebug || null;
         const hasOpenTrade = Boolean(statusData.openTrade);
-        // If the local pill says ACTIVE, filter out the stale "Trading disabled"
-        // blocker that can arrive from a server instance that never received the
-        // Start command (seeking timeout, instance restart, load-balancer split).
         const locallyActive = tradingStatusEl?.textContent === 'ACTIVE';
-        let entryReason;
+
+        // Quick summary line
+        let entrySummary;
         if (!entryDbg) {
-          entryReason = 'N/A';
+          entrySummary = 'N/A';
+        } else if (hasOpenTrade) {
+          entrySummary = '<span style="color:var(--warn)">Monitoring open position</span>';
         } else if (entryDbg.eligible) {
-          entryReason = 'ELIGIBLE (will enter if Rec=ENTER + thresholds hit)';
-        } else if (Array.isArray(entryDbg.blockers) && entryDbg.blockers.length) {
-          let blockers = entryDbg.blockers;
-          if (locallyActive) {
-            blockers = blockers.filter(b => !/trading disabled/i.test(b));
-          }
-          // "Trade already open" is not a useful blocker — the open trade panel
-          // already shows position details. Hide it from the entry reason display.
-          if (hasOpenTrade) {
-            blockers = blockers.filter(b => !/trade already open|position open/i.test(b));
-          }
-          if (blockers.length === 0 && hasOpenTrade) {
-            entryReason = 'Monitoring open position';
-          } else {
-            entryReason = blockers.length
-              ? blockers.join('; ')
-              : 'ELIGIBLE (will enter if Rec=ENTER + thresholds hit)';
-          }
+          entrySummary = '<span style="color:var(--good)">ELIGIBLE</span>';
         } else {
-          entryReason = 'Not eligible';
+          let blockers = entryDbg.blockers || [];
+          if (locallyActive) blockers = blockers.filter(b => !/trading disabled/i.test(b));
+          if (hasOpenTrade) blockers = blockers.filter(b => !/trade already open|position open/i.test(b));
+          const failCount = blockers.length;
+          entrySummary = failCount
+            ? `<span style="color:var(--bad)">${failCount} blocker${failCount > 1 ? 's' : ''}</span>`
+            : '<span style="color:var(--good)">ELIGIBLE</span>';
         }
 
         const rows = [
           ['Mode', `<strong>${mode}</strong> ${tradingStatusEl?.textContent === 'ACTIVE' ? '<span style="color:var(--good)">ACTIVE</span>' : '<span style="color:var(--bad)">STOPPED</span>'}`],
-          ['Polymarket URL', pmUrl ? `<a href="${pmUrl}" target="_blank" rel="noreferrer">${pmUrl}</a>` : 'N/A'],
-          ['Market', rt.marketSlug || 'N/A'],
+          ['Market', `${rt.marketSlug || 'N/A'} ${pmUrl ? `<a href="${pmUrl}" target="_blank" style="opacity:0.5;font-size:11px">[link]</a>` : ''}`],
           ['Time left', timeLeft],
           ['BTC', btc],
           ['Poly UP / DOWN', `${polyUp} / ${polyDown}`],
           ['Model', `${rt.narrative || 'N/A'} (UP ${up} / DOWN ${down})`],
           ['Candles (1m)', String(cc)],
-          ['Why no entry?', entryReason]
+          ['Entry Gate', entrySummary],
         ];
 
-        // Entry thresholds (from server config)
+        // ── Live Gate Status: current values vs thresholds ──────────────
         const thr = statusData.entryThresholds;
-        if (thr) {
-          const pct  = v => v != null ? `${(v * 100).toFixed(0)}%` : '—';
-          const pct1 = v => v != null ? `${(v * 100).toFixed(1)}%` : '—';
-          const c    = v => v != null ? `${(v * 100).toFixed(2)}¢` : '—';
-          const usd  = v => v != null ? `$${v}` : '—';
+        if (thr && rt) {
+          // Helpers
+          const pass = ok => ok ? '<span style="color:var(--good)">PASS</span>' : '<span style="color:var(--bad)">FAIL</span>';
+          const na = '<span style="opacity:0.4">N/A</span>';
+          const pct  = v => v != null ? `${(v * 100).toFixed(1)}%` : null;
+          const pctS = v => v != null ? `${(v * 100).toFixed(1)}%` : '—';
+          const c    = v => v != null ? `${(v * 100).toFixed(2)}c` : '—';
 
-          // Schedule badge — shows whether weekend tightening is live right now
-          const schedBadge = thr.weekendTighteningActive
-            ? `<span class="threshold-wknd">⚠ WEEKEND tightening ACTIVE (${thr.pacificDay} ${thr.pacificHour}:00 PT)</span>`
-            : `<span style="color:var(--good)">✓ Weekday</span> <span style="opacity:0.5">${thr.pacificDay} ${String(thr.pacificHour).padStart(2,'0')}:00 PT</span>`;
+          // Determine effective thresholds (apply weekend tightening if active)
+          const wknd = thr.weekendTighteningActive;
 
-          // If weekend tightening is active, show effective tightened values inline
-          const effProb = thr.weekendTighteningActive
-            ? ` <span class="threshold-wknd">→ active: ${pct(thr.minProbEarly + thr.weekendProbBoost)} / ${pct(thr.minProbMid + thr.weekendProbBoost)} / ${pct(thr.minProbLate + thr.weekendProbBoost)}</span>`
-            : '';
-          const effEdge = thr.weekendTighteningActive
-            ? ` <span class="threshold-wknd">→ active: ${pct1(thr.edgeEarly + thr.weekendEdgeBoost)} / ${pct1(thr.edgeMid + thr.weekendEdgeBoost)} / ${pct1(thr.edgeLate + thr.weekendEdgeBoost)}</span>`
-            : '';
+          // Which phase are we in?
+          const phase = rt.recPhase || 'MID';
+          const effMinProb = phase === 'EARLY' ? thr.minProbEarly
+            : phase === 'LATE' ? thr.minProbLate : thr.minProbMid;
+          const effMinProbW = wknd ? effMinProb + (thr.weekendProbBoost ?? 0) : effMinProb;
+          const effEdge = phase === 'EARLY' ? thr.edgeEarly
+            : phase === 'LATE' ? thr.edgeLate : thr.edgeMid;
+          const effEdgeW = wknd ? effEdge + (thr.weekendEdgeBoost ?? 0) : effEdge;
+          const effMaxSpread = wknd ? (thr.weekendMaxSpread ?? thr.maxSpread) : thr.maxSpread;
+          const effMinLiq = wknd ? (thr.weekendMinLiquidity ?? thr.minLiquidity) : thr.minLiquidity;
+          const effMinModelMax = wknd ? (thr.weekendMinModelMaxProb ?? thr.minModelMaxProb) : thr.minModelMaxProb;
+          const effMinRange = wknd ? (thr.weekendMinRangePct20 ?? thr.minRangePct20) : thr.minRangePct20;
 
-          rows.push(['Schedule',     schedBadge]);
-          rows.push(['Prob E/M/L',   `${pct(thr.minProbEarly)} / ${pct(thr.minProbMid)} / ${pct(thr.minProbLate)}${effProb}`]);
-          rows.push(['Edge E/M/L',   `${pct1(thr.edgeEarly)} / ${pct1(thr.edgeMid)} / ${pct1(thr.edgeLate)}${effEdge}`]);
-          rows.push(['Spread / Liq', `spread ≤${c(thr.maxSpread)} (wknd ≤${c(thr.weekendMaxSpread)}) · liq ≥${usd(thr.minLiquidity)} (wknd ≥$${(thr.weekendMinLiquidity ?? 0).toLocaleString()})`]);
-          rows.push(['Conviction',   `model max ≥${pct(thr.minModelMaxProb)} (wknd ≥${pct(thr.weekendMinModelMaxProb)}) · entry ≤${c(thr.maxEntryPolyPrice)}`]);
-          rows.push(['Filters',      `RSI skip ${thr.noTradeRsiMin}–${thr.noTradeRsiMax} · range ≥${(thr.minRangePct20 * 100).toFixed(2)}% · impulse ≥${(thr.minBtcImpulsePct1m * 100).toFixed(3)}% · no entry <${thr.noEntryFinalMinutes}m`]);
-          rows.push(['Guardrails',   `circuit ${thr.circuitBreakerConsecutiveLosses} losses · daily loss ${usd(thr.maxDailyLossUsd)} · cooldown L${thr.lossCooldownSeconds}s / W${thr.winCooldownSeconds}s`]);
+          // Current values
+          const modelProb = (rt.narrative === 'LONG' || (rt.recSide === 'UP'))
+            ? rt.modelUp : rt.modelDown;
+          const modelMax = (rt.modelUp != null && rt.modelDown != null)
+            ? Math.max(rt.modelUp, rt.modelDown) : null;
+          const edge = rt.recEdge;
+          const rsi = rt.rsiNow;
+          const impulseAbs = rt.spotDelta1mPct != null ? Math.abs(rt.spotDelta1mPct) : null;
+          const range = rt.rangePct20;
+          const worstSpread = [rt.spreadUp, rt.spreadDown].filter(v => v != null).length
+            ? Math.max(...[rt.spreadUp, rt.spreadDown].filter(v => v != null))
+            : null;
+          const liq = rt.liquidityNum;
+          const effectiveSide = rt.recSide || (rt.modelUp != null && rt.modelDown != null ? (rt.modelUp >= rt.modelDown ? 'UP' : 'DOWN') : null);
+          const entryPolyPrice = effectiveSide === 'UP' ? rt.polyUp : effectiveSide === 'DOWN' ? rt.polyDown : null;
+          const oppPolyPrice = effectiveSide === 'UP' ? rt.polyDown : effectiveSide === 'DOWN' ? rt.polyUp : null;
+          const tlm = rt.timeLeftMin;
+
+          // Build gate rows: [label, currentStr, passStr, thresholdStr]
+          const gateRows = [];
+
+          // Rec
+          const recOk = rt.recAction === 'ENTER';
+          gateRows.push(['Rec', `${rt.recAction || '—'} ${rt.recSide || ''} (${phase})`, pass(recOk), 'ENTER']);
+
+          // Probability
+          if (modelProb != null) {
+            const probOk = modelProb >= effMinProbW;
+            gateRows.push(['Prob', pctS(modelProb), pass(probOk), `>= ${pctS(effMinProbW)}`]);
+          } else {
+            gateRows.push(['Prob', '—', na, `>= ${pctS(effMinProbW)}`]);
+          }
+
+          // Edge
+          if (edge != null) {
+            const edgeOk = edge >= effEdgeW;
+            gateRows.push(['Edge', pctS(edge), pass(edgeOk), `>= ${pctS(effEdgeW)}`]);
+          } else {
+            gateRows.push(['Edge', '—', na, `>= ${pctS(effEdgeW)}`]);
+          }
+
+          // RSI
+          if (rsi != null) {
+            const inBand = rsi >= (thr.noTradeRsiMin ?? 30) && rsi < (thr.noTradeRsiMax ?? 45);
+            gateRows.push(['RSI', rsi.toFixed(1), pass(!inBand), `outside ${thr.noTradeRsiMin}-${thr.noTradeRsiMax}`]);
+          } else {
+            gateRows.push(['RSI', '—', na, `outside ${thr.noTradeRsiMin}-${thr.noTradeRsiMax}`]);
+          }
+
+          // Impulse
+          if (impulseAbs != null) {
+            const impulseOk = impulseAbs >= (thr.minBtcImpulsePct1m ?? 0);
+            gateRows.push(['Impulse', `${(impulseAbs * 100).toFixed(3)}%`, pass(impulseOk), `>= ${((thr.minBtcImpulsePct1m ?? 0) * 100).toFixed(3)}%`]);
+          } else {
+            gateRows.push(['Impulse', '—', na, `>= ${((thr.minBtcImpulsePct1m ?? 0) * 100).toFixed(3)}%`]);
+          }
+
+          // Range (volatility)
+          if (range != null) {
+            const rangeOk = range >= effMinRange;
+            gateRows.push(['Range20', `${(range * 100).toFixed(3)}%`, pass(rangeOk), `>= ${(effMinRange * 100).toFixed(3)}%`]);
+          } else {
+            gateRows.push(['Range20', '—', na, `>= ${(effMinRange * 100).toFixed(3)}%`]);
+          }
+
+          // Conviction (model max prob)
+          if (modelMax != null) {
+            const convOk = modelMax >= effMinModelMax;
+            gateRows.push(['Conviction', pctS(modelMax), pass(convOk), `>= ${pctS(effMinModelMax)}`]);
+          } else {
+            gateRows.push(['Conviction', '—', na, `>= ${pctS(effMinModelMax)}`]);
+          }
+
+          // Spread
+          if (worstSpread != null) {
+            const spreadOk = worstSpread <= effMaxSpread;
+            gateRows.push(['Spread', c(worstSpread), pass(spreadOk), `<= ${c(effMaxSpread)}`]);
+          } else {
+            gateRows.push(['Spread', '—', na, `<= ${c(effMaxSpread)}`]);
+          }
+
+          // Liquidity
+          if (liq != null) {
+            const liqOk = liq >= effMinLiq;
+            gateRows.push(['Liquidity', `$${Number(liq).toLocaleString()}`, pass(liqOk), `>= $${Number(effMinLiq).toLocaleString()}`]);
+          } else {
+            gateRows.push(['Liquidity', '—', na, `>= $${Number(effMinLiq).toLocaleString()}`]);
+          }
+
+          // Entry price
+          if (entryPolyPrice != null) {
+            const epOk = entryPolyPrice <= (thr.maxEntryPolyPrice ?? 0.65);
+            gateRows.push(['Entry Px', c(entryPolyPrice), pass(epOk), `<= ${c(thr.maxEntryPolyPrice ?? 0.65)}`]);
+          } else {
+            gateRows.push(['Entry Px', '—', na, `<= ${c(thr.maxEntryPolyPrice ?? 0.65)}`]);
+          }
+
+          // Opposite price
+          if (oppPolyPrice != null) {
+            const opOk = oppPolyPrice >= (thr.minOppositePolyPrice ?? 0.10);
+            gateRows.push(['Opp Px', c(oppPolyPrice), pass(opOk), `>= ${c(thr.minOppositePolyPrice ?? 0.10)}`]);
+          }
+
+          // Time
+          if (tlm != null) {
+            const timeOk = tlm >= (thr.noEntryFinalMinutes ?? 1.5);
+            gateRows.push(['Time', `${tlm.toFixed(1)}m`, pass(timeOk), `>= ${thr.noEntryFinalMinutes ?? 1.5}m`]);
+          }
+
+          // Candles
+          const candleOk = cc >= (thr.minCandlesForEntry ?? 12);
+          gateRows.push(['Candles', String(cc), pass(candleOk), `>= ${thr.minCandlesForEntry ?? 12}`]);
+
+          // Weekend tightening badge
+          if (wknd) {
+            rows.push(['Schedule', `<span class="threshold-wknd">WEEKEND tightening (${thr.pacificDay} ${thr.pacificHour}:00 PT)</span>`]);
+          }
+
+          // Build gate table HTML
+          const passCount = gateRows.filter(r => r[2].includes('PASS')).length;
+          const failCount = gateRows.filter(r => r[2].includes('FAIL')).length;
+          const gateHeader = `<span style="font-weight:600">${passCount} pass</span> / <span style="color:var(--bad);font-weight:600">${failCount} fail</span>`;
+
+          const gateHtml = `<table style="width:100%;font-size:12px;border-collapse:collapse;margin-top:4px"><thead><tr style="opacity:0.5;font-size:11px"><td>Check</td><td>Current</td><td></td><td>Required</td></tr></thead><tbody>` +
+            gateRows.map(([label, current, status, threshold]) =>
+              `<tr style="border-bottom:1px solid rgba(255,255,255,0.05)"><td style="padding:2px 6px 2px 0;opacity:0.6">${label}</td><td style="padding:2px 6px;font-family:monospace">${current}</td><td style="padding:2px 4px;text-align:center">${status}</td><td style="padding:2px 6px;opacity:0.5;font-family:monospace">${threshold}</td></tr>`
+            ).join('') +
+            `</tbody></table>`;
+
+          rows.push(['Gate Status', `${gateHeader}${gateHtml}`]);
+
+          // Guardrails (compact)
+          rows.push(['Guardrails', `circuit ${thr.circuitBreakerConsecutiveLosses} losses · daily loss $${thr.maxDailyLossUsd} · cooldown L${thr.lossCooldownSeconds}s / W${thr.winCooldownSeconds}s`]);
         }
 
         statusMessage.innerHTML = `<table class="kv-table"><tbody>` +

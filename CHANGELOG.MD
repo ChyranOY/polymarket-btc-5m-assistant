@@ -2,6 +2,18 @@
 
 All notable changes to Polymarket BTC 5m Assistant are documented in this file.
 
+## [1.0.3] - 2026-02-24
+
+### Changed
+
+- **Live gate status table replaces static "ELIGIBLE" message**: The entry status now shows a real-time threshold comparison table with 13 checks (Rec, Prob, Edge, RSI, Impulse, Range20, Conviction, Spread, Liquidity, Entry Px, Opp Px, Time, Candles). Each row displays current value, PASS/FAIL indicator, and required threshold. Summary header shows pass/fail count. Weekend-tightened effective thresholds applied automatically when active.
+- **New live signal values exposed to UI**: Added `rsiNow`, `rangePct20`, `spreadUp`, `spreadDown`, `liquidityNum`, `recAction`, `recSide`, `recPhase`, `recEdge` to `__uiStatus` in `index.js` so the dashboard can compare live values against thresholds.
+- **Missing thresholds added to status API**: `entryThresholds` now includes `minOppositePolyPrice`, `minPolyPrice`, `maxPolyPrice`, `weekendMinRangePct20`, and `minCandlesForEntry`.
+
+### Removed
+
+- **Static threshold config rows**: Replaced the old Prob E/M/L, Edge E/M/L, Spread/Liq, Conviction, and Filters rows with the live gate status table that shows both config and current values side-by-side.
+
 ## [1.0.2] - 2026-02-24
 
 ### Fixed

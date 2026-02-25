@@ -115,6 +115,11 @@ export async function assembleStatus() {
       noTradeRsiMin: CONFIG.paperTrading.noTradeRsiMin ?? 30,
       noTradeRsiMax: CONFIG.paperTrading.noTradeRsiMax ?? 45,
       maxEntryPolyPrice: CONFIG.paperTrading.maxEntryPolyPrice ?? 0.65,
+      minOppositePolyPrice: CONFIG.paperTrading.minOppositePolyPrice ?? 0.10,
+      minPolyPrice: CONFIG.paperTrading.minPolyPrice ?? 0.05,
+      maxPolyPrice: CONFIG.paperTrading.maxPolyPrice ?? 0.95,
+      weekendMinRangePct20: CONFIG.paperTrading.weekendMinRangePct20 ?? 0.0025,
+      minCandlesForEntry: CONFIG.paperTrading.minCandlesForEntry ?? 12,
       // Guardrails
       circuitBreakerConsecutiveLosses: CONFIG.paperTrading.circuitBreakerConsecutiveLosses ?? 5,
       maxDailyLossUsd: CONFIG.paperTrading.maxDailyLossUsd ?? 50,
