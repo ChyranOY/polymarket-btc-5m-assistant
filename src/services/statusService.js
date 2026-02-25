@@ -120,6 +120,10 @@ export async function assembleStatus() {
       maxPolyPrice: CONFIG.paperTrading.maxPolyPrice ?? 0.95,
       weekendMinRangePct20: CONFIG.paperTrading.weekendMinRangePct20 ?? 0.0025,
       minCandlesForEntry: CONFIG.paperTrading.minCandlesForEntry ?? 12,
+      // Volume thresholds
+      minVolumeRecent: CONFIG.paperTrading.minVolumeRecent ?? 0,
+      minVolumeRatio: CONFIG.paperTrading.minVolumeRatio ?? 0,
+      minMarketVolumeNum: CONFIG.paperTrading.minMarketVolumeNum ?? 0,
       // Guardrails
       circuitBreakerConsecutiveLosses: CONFIG.paperTrading.circuitBreakerConsecutiveLosses ?? 5,
       maxDailyLossUsd: CONFIG.paperTrading.maxDailyLossUsd ?? 50,
@@ -127,6 +131,34 @@ export async function assembleStatus() {
       winCooldownSeconds: CONFIG.paperTrading.winCooldownSeconds ?? 30,
       noEntryFinalMinutes: CONFIG.paperTrading.noEntryFinalMinutes ?? 1.5,
       }; // end return
+    })(),
+    // Guardrail live state (for gate status table)
+    guardrails: (() => {
+      const st = engine?.state;
+      if (!st) return null;
+      const now = Date.now();
+      const lossCdSec = engine?.config?.lossCooldownSeconds ?? CONFIG.paperTrading.lossCooldownSeconds ?? 0;
+      const winCdSec = engine?.config?.winCooldownSeconds ?? CONFIG.paperTrading.winCooldownSeconds ?? 0;
+      const lossCdRemaining = (lossCdSec > 0 && st.lastLossAtMs)
+        ? Math.max(0, lossCdSec * 1000 - (now - st.lastLossAtMs)) : 0;
+      const winCdRemaining = (winCdSec > 0 && st.lastWinAtMs)
+        ? Math.max(0, winCdSec * 1000 - (now - st.lastWinAtMs)) : 0;
+      const cbMax = engine?.config?.circuitBreakerConsecutiveLosses ?? CONFIG.paperTrading.circuitBreakerConsecutiveLosses ?? 0;
+      const cbCooldownMs = engine?.config?.circuitBreakerCooldownMs ?? 5 * 60_000;
+      const cbResult = (cbMax > 0 && typeof st.checkCircuitBreaker === 'function')
+        ? st.checkCircuitBreaker(cbMax, cbCooldownMs) : { tripped: false, remaining: 0 };
+      return {
+        lossCooldownActive: lossCdRemaining > 0,
+        lossCooldownRemainingMs: lossCdRemaining,
+        winCooldownActive: winCdRemaining > 0,
+        winCooldownRemainingMs: winCdRemaining,
+        consecutiveLosses: st.consecutiveLosses ?? 0,
+        circuitBreakerTripped: cbResult.tripped,
+        circuitBreakerRemainingMs: cbResult.remaining,
+        skipMarketSlug: st.skipMarketUntilNextSlug ?? null,
+        hasOpenPosition: st.hasOpenPosition ?? false,
+        weekdaysOnly: engine?.config?.weekdaysOnly ?? CONFIG.paperTrading.weekdaysOnly ?? false,
+      };
     })(),
     killSwitch: engine?.state?.getKillSwitchStatus?.(
       engine?.config?.maxDailyLossUsd ?? CONFIG.liveTrading?.maxDailyLossUsd ?? CONFIG.paperTrading?.maxDailyLossUsd ?? null,

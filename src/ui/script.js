@@ -564,7 +564,7 @@ document.addEventListener('DOMContentLoaded', () => {
           if (hasOpenTrade) blockers = blockers.filter(b => !/trade already open|position open/i.test(b));
           const failCount = blockers.length;
           entrySummary = failCount
-            ? `<span style="color:var(--bad)">${failCount} blocker${failCount > 1 ? 's' : ''}</span>`
+            ? `<span style="color:var(--bad)">${failCount} blocker${failCount > 1 ? 's' : ''}</span> <span style="opacity:0.6;font-size:12px">— ${blockers.join('; ')}</span>`
             : '<span style="color:var(--good)">ELIGIBLE</span>';
         }
 
@@ -717,6 +717,83 @@ document.addEventListener('DOMContentLoaded', () => {
           // Candles
           const candleOk = cc >= (thr.minCandlesForEntry ?? 12);
           gateRows.push(['Candles', String(cc), pass(candleOk), `>= ${thr.minCandlesForEntry ?? 12}`]);
+
+          // Poly price bounds (overall min/max — different from entry price cap)
+          if (entryPolyPrice != null) {
+            const minPoly = thr.minPolyPrice ?? 0.05;
+            const maxPoly = thr.maxPolyPrice ?? 0.95;
+            const boundsOk = entryPolyPrice >= minPoly && entryPolyPrice <= maxPoly;
+            gateRows.push(['Poly Bounds', c(entryPolyPrice), pass(boundsOk), `${c(minPoly)} – ${c(maxPoly)}`]);
+          }
+
+          // ── Guardrail gate rows (data from statusData.guardrails) ──
+          const gr = statusData.guardrails;
+          if (gr) {
+            // Loss cooldown
+            if ((thr.lossCooldownSeconds ?? 0) > 0) {
+              const lcdOk = !gr.lossCooldownActive;
+              const lcdText = gr.lossCooldownActive ? `${(gr.lossCooldownRemainingMs / 1000).toFixed(0)}s left` : 'Clear';
+              gateRows.push(['Loss CD', lcdText, pass(lcdOk), `${thr.lossCooldownSeconds}s after loss`]);
+            }
+
+            // Win cooldown
+            if ((thr.winCooldownSeconds ?? 0) > 0) {
+              const wcdOk = !gr.winCooldownActive;
+              const wcdText = gr.winCooldownActive ? `${(gr.winCooldownRemainingMs / 1000).toFixed(0)}s left` : 'Clear';
+              gateRows.push(['Win CD', wcdText, pass(wcdOk), `${thr.winCooldownSeconds}s after win`]);
+            }
+
+            // Circuit breaker
+            if ((thr.circuitBreakerConsecutiveLosses ?? 0) > 0) {
+              const cbOk = !gr.circuitBreakerTripped;
+              const cbText = gr.circuitBreakerTripped
+                ? `TRIPPED (${(gr.circuitBreakerRemainingMs / 1000).toFixed(0)}s left)`
+                : `${gr.consecutiveLosses} losses`;
+              gateRows.push(['Circuit Brk', cbText, pass(cbOk), `< ${thr.circuitBreakerConsecutiveLosses} consecutive`]);
+            }
+
+            // Schedule (weekdays only)
+            if (gr.weekdaysOnly) {
+              const schedOk = !( // mirrors entryGate.js check 10
+                (thr.isWeekend && !(thr.pacificDay === 'Sun' && thr.pacificHour >= 15)) // allowSundayAfterHour default
+                || (thr.pacificDay === 'Fri' && thr.pacificHour >= 17) // noEntryAfterFridayHour default
+              );
+              gateRows.push(['Schedule', `${thr.pacificDay} ${thr.pacificHour}:00 PT`, pass(schedOk), 'Weekdays only']);
+            }
+
+            // Skip market after max loss
+            if (gr.skipMarketSlug) {
+              const skipOk = gr.skipMarketSlug !== (rt.marketSlug || '');
+              gateRows.push(['Skip Mkt', gr.skipMarketSlug === (rt.marketSlug || '') ? 'Same market' : 'New market', pass(skipOk), 'Wait for next 5m']);
+            }
+          }
+
+          // Kill-switch
+          const ks = statusData.killSwitch;
+          if (ks) {
+            const ksOk = !ks.triggered;
+            const ksText = ks.triggered ? `$${(ks.todayPnl ?? 0).toFixed(2)} (HALTED)` : `$${(ks.todayPnl ?? 0).toFixed(2)}`;
+            gateRows.push(['Kill Switch', ksText, pass(ksOk), `> -$${Math.abs(thr.maxDailyLossUsd ?? 50).toFixed(0)}`]);
+          }
+
+          // BTC Volume
+          const volRecent = rt.volumeRecent;
+          const volAvg = rt.volumeAvg;
+          if (volRecent != null && (thr.minVolumeRecent > 0 || thr.minVolumeRatio > 0)) {
+            const absOk = !(thr.minVolumeRecent > 0 && volRecent < thr.minVolumeRecent);
+            const relOk = !(thr.minVolumeRatio > 0 && volAvg != null && volRecent < volAvg * thr.minVolumeRatio);
+            const volOk = absOk && relOk;
+            const volText = volAvg != null ? `${volRecent.toFixed(1)} (avg ${volAvg.toFixed(1)})` : `${volRecent.toFixed(1)}`;
+            const reqText = thr.minVolumeRatio > 0 ? `ratio >= ${thr.minVolumeRatio}` : `>= ${thr.minVolumeRecent}`;
+            gateRows.push(['BTC Vol', volText, pass(volOk), reqText]);
+          }
+
+          // Market Volume
+          const mktVol = rt.marketVolumeNum;
+          if (mktVol != null && (thr.minMarketVolumeNum ?? 0) > 0) {
+            const mktVolOk = mktVol >= thr.minMarketVolumeNum;
+            gateRows.push(['Mkt Vol', `$${Number(mktVol).toLocaleString()}`, pass(mktVolOk), `>= $${Number(thr.minMarketVolumeNum).toLocaleString()}`]);
+          }
 
           // Weekend tightening badge
           if (wknd) {

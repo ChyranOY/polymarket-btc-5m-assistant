@@ -545,6 +545,10 @@ async function startApp() {
       recSide: rec.side ?? null,
       recPhase: rec.phase ?? null,
       recEdge: rec.edge ?? null,
+      // Volume data for gate status
+      volumeRecent: indicatorsData.volumeRecent ?? null,
+      volumeAvg: indicatorsData.volumeAvg ?? null,
+      marketVolumeNum: polySnapshot.ok ? (polySnapshot.market?.volumeNum ?? null) : null,
     };
 
     // Refresh market cache for executor's getMarket() thunk
