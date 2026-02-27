@@ -2,6 +2,17 @@
 
 All notable changes to Polymarket BTC 5m Assistant are documented in this file.
 
+## [1.0.8] - 2026-02-27
+
+### Added
+
+- **Settlement tracking for closed trades**: Trade records now capture `marketSettlementTime` from `marketSlug`, plus settlement backfill fields (`btcAtSettlement`, `settlementSide`, `directionCorrect`) when a closed trade passes settlement.
+- **Background settlement checker in main tick loop**: New `src/services/settlementService.js` runs periodically and backfills settlement outcome for recently settled closed trades that do not yet have resolution metadata.
+
+### Changed
+
+- **PaperExecutor trade metadata at open/close**: `openPosition` now stamps `marketSettlementTime` from slug timestamp; `closePosition` now records `btcAtExit` from exit metadata and ensures settlement timestamp is present on closed trades.
+
 ## [1.0.7] - 2026-02-26
 
 ### Changed (data-driven tuning from 234-trade analysis)

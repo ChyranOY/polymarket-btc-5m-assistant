@@ -24,6 +24,7 @@ import {
 import { fetchOrderBook, fetchClobPrice } from '../../data/polymarket.js';
 import { CONFIG } from '../../config.js';
 import { pickTokenId } from '../market/tokenMapping.js';
+import { deriveMarketSettlementTime } from '../../services/settlementService.js';
 
 /** @import { OrderRequest, OrderResult, CloseRequest, CloseResult, PositionView, BalanceSnapshot } from '../../domain/types.js' */
 
@@ -126,6 +127,7 @@ export class PaperExecutor extends OrderExecutor {
       id: tradeId,
       timestamp: new Date().toISOString(),
       marketSlug,
+      marketSettlementTime: deriveMarketSettlementTime(marketSlug),
       side,
       instrument: 'POLY',
       entryPrice: fillPrice,
@@ -232,6 +234,13 @@ export class PaperExecutor extends OrderExecutor {
     // Spread exit-time indicator snapshots onto the trade
     if (exitMetadata && typeof exitMetadata === 'object') {
       Object.assign(trade, exitMetadata);
+    }
+
+    if (!trade.marketSettlementTime) {
+      trade.marketSettlementTime = deriveMarketSettlementTime(trade.marketSlug);
+    }
+    if (trade.btcAtExit === undefined || trade.btcAtExit === null) {
+      trade.btcAtExit = trade.btcSpotAtExit ?? exitMetadata?.btcSpotAtExit ?? null;
     }
 
     await updateTrade(trade.id, trade);
