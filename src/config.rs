@@ -47,6 +47,7 @@ pub struct LiveCreds {
     pub api_key: String,
     pub api_secret: String,
     pub passphrase: String,
+    pub polygon_rpc_url: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -137,6 +138,7 @@ impl AppConfig {
                 api_key: ak,
                 api_secret: sk,
                 passphrase: pp,
+                polygon_rpc_url: env_opt("POLYGON_RPC_URL"),
             }),
             _ => None,
         };

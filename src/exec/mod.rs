@@ -1,5 +1,6 @@
 pub mod live;
 pub mod paper;
+pub mod redeem;
 
 use crate::error::Result;
 use crate::model::{Balance, Mode, OpenPosition, Side};

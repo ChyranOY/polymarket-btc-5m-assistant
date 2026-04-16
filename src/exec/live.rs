@@ -25,6 +25,7 @@ pub struct LiveExecutor {
     clob: Arc<ClobRest>,
     funder_address: String,
     chain_id: u64,
+    polygon_rpc_url: Option<String>,
 }
 
 impl LiveExecutor {
@@ -48,6 +49,7 @@ impl LiveExecutor {
             clob,
             funder_address: creds.funder_address.clone(),
             chain_id,
+            polygon_rpc_url: creds.polygon_rpc_url.clone(),
         })
     }
 
@@ -242,29 +244,55 @@ impl Executor for LiveExecutor {
     }
 
     async fn redeem_winnings(&self, token_id: &str, shares: Decimal) -> Result<Decimal> {
-        // CTF redeemPositions call on Polygon.
-        // Contract: 0x4D97DCd97eC945f40cF65F87097ACe5EA0476045
-        // collateralToken: USDC 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174
-        // parentCollectionId: bytes32(0)
-        // indexSets: [1, 2] for binary market
-        //
-        // Needs: alloy provider + transaction signing + gas estimation.
-        // For now, log the intent and query the data-api for confirmation.
-        tracing::warn!(
-            token_id,
-            shares = %shares,
-            "live: redeem_winnings — submitting CTF redeemPositions"
-        );
-        match redeem_via_rpc(token_id, shares, &self.signer, &self.funder_address).await {
-            Ok(credited) => {
-                tracing::info!(credited = %credited, token_id, "live: redemption succeeded");
-                Ok(credited)
-            }
-            Err(e) => {
-                tracing::error!(err = %e, token_id, "live: redemption failed");
-                Err(BotError::other(format!("redeem: {e}")))
+        let Some(rpc_url) = &self.polygon_rpc_url else {
+            tracing::warn!(
+                token_id,
+                shares = %shares,
+                "live: redeem skipped — POLYGON_RPC_URL not configured"
+            );
+            return Ok(shares); // return theoretical value
+        };
+
+        tracing::info!(token_id, shares = %shares, "live: checking redeemable positions");
+
+        // Query the Polymarket data-api for redeemable positions.
+        let redeemable = super::redeem::fetch_redeemable_positions(&self.funder_address)
+            .await
+            .map_err(|e| BotError::other(format!("fetch redeemable: {e}")))?;
+
+        if redeemable.is_empty() {
+            tracing::debug!("live: no redeemable positions found");
+            return Ok(Decimal::ZERO);
+        }
+
+        let mut total_redeemed = Decimal::ZERO;
+        for pos in &redeemable {
+            tracing::info!(
+                condition_id = %pos.condition_id,
+                size = %pos.size,
+                "live: redeeming position"
+            );
+            match super::redeem::redeem_position_onchain(
+                rpc_url,
+                &self.signer,
+                &pos.condition_id,
+            )
+            .await
+            {
+                Ok(tx_hash) => {
+                    tracing::info!(tx_hash, size = %pos.size, "live: redeemed");
+                    total_redeemed += pos.size;
+                }
+                Err(e) => {
+                    tracing::error!(
+                        condition_id = %pos.condition_id,
+                        err = %e,
+                        "live: redeem tx failed"
+                    );
+                }
             }
         }
+        Ok(total_redeemed)
     }
 
     fn mode(&self) -> Mode {
@@ -272,28 +300,3 @@ impl Executor for LiveExecutor {
     }
 }
 
-/// Submit a CTF redeemPositions transaction via raw JSON-RPC.
-/// This is a minimal implementation using reqwest + alloy ABI encoding.
-async fn redeem_via_rpc(
-    _token_id: &str,
-    shares: Decimal,
-    _signer: &PrivateKeySigner,
-    _funder: &str,
-) -> std::result::Result<Decimal, String> {
-    // TODO: Full implementation requires:
-    // 1. Encode redeemPositions(collateralToken, parentCollectionId, conditionId, indexSets)
-    //    - conditionId from Polymarket data-api for the specific market
-    //    - indexSets = [1, 2] for binary
-    // 2. Build transaction: to=CTF_ADDRESS, data=encoded, gas=300000, chainId=137
-    // 3. Sign with signer
-    // 4. Submit via eth_sendRawTransaction to POLYGON_RPC
-    // 5. Wait for receipt
-    //
-    // For now, return the theoretical value ($1 per winning share).
-    // The actual balance update happens on-chain; next balance() call will reflect it.
-    tracing::warn!(
-        shares = %shares,
-        "redeem_via_rpc: on-chain CTF call not yet wired — returning theoretical value"
-    );
-    Ok(shares) // $1 per winning share
-}
