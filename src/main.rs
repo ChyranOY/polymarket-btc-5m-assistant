@@ -172,7 +172,7 @@ async fn boot_reconcile(
 
     // 3) Hydrate recent_trades from Supabase so stats (total trades, win rate) are
     // accurate from the first poll, not just from trades closed this session.
-    match supabase.fetch_recent_closed_trades(mode, 100).await {
+    match supabase.fetch_recent_closed_trades(mode, 10_000).await {
         Ok(trades) => {
             let count = trades.len();
             state.recent_trades = trades;
