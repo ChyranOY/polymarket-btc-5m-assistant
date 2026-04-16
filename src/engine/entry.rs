@@ -11,6 +11,7 @@ use serde::Serialize;
 pub enum SkipReason {
     TradingDisabled,
     OpenPositionExists,
+    AlreadyTradedThisMarket,
     OutsideTradingHours,
     MarketNotAlive,
     CheapSideOutOfRange,
@@ -23,6 +24,7 @@ impl SkipReason {
         match self {
             SkipReason::TradingDisabled => "trading_disabled",
             SkipReason::OpenPositionExists => "open_position_exists",
+            SkipReason::AlreadyTradedThisMarket => "already_traded_this_market",
             SkipReason::OutsideTradingHours => "outside_trading_hours",
             SkipReason::MarketNotAlive => "market_not_alive",
             SkipReason::CheapSideOutOfRange => "cheap_side_out_of_range",
@@ -56,6 +58,14 @@ pub fn evaluate_entry(
     }
     if state.position.is_some() {
         return EntryDecision::Skip(SkipReason::OpenPositionExists);
+    }
+    if state
+        .last_traded_slug
+        .as_deref()
+        .map(|s| s == snapshot.market_slug)
+        .unwrap_or(false)
+    {
+        return EntryDecision::Skip(SkipReason::AlreadyTradedThisMarket);
     }
     if state.circuit_breaker_tripped(now) {
         return EntryDecision::Skip(SkipReason::CircuitBreakerTripped);

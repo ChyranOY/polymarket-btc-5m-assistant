@@ -88,19 +88,53 @@ async fn status(State(s): State<AppState>) -> Json<Value> {
         })
     });
 
-    let pos_json = engine_state.position.as_ref().map(|p| {
-        json!({
+    // Compute unrealized PnL from WS book if a position is open.
+    let pos_json = if let Some(p) = engine_state.position.as_ref() {
+        let current_bid = h
+            .clob_ws
+            .as_ref()
+            .map(|ws| {
+                // peek is async; we need the value inline. Use try_read on the underlying store.
+                let books = ws.books();
+                let guard = books.try_read();
+                guard
+                    .ok()
+                    .and_then(|g| g.get(&p.token_id).cloned())
+                    .and_then(|b| b.best_bid)
+            })
+            .flatten();
+        let unrealized_pnl = current_bid.map(|bid| (bid - p.entry_price) * p.shares);
+        Some(json!({
             "id": p.id,
             "side": p.side.as_str(),
             "entry_price": p.entry_price,
             "shares": p.shares,
             "contract_size": p.contract_size,
             "entry_time": p.entry_time,
-            "max_unrealized_pnl": p.max_unrealized_pnl,
-            "min_unrealized_pnl": p.min_unrealized_pnl,
+            "unrealized_pnl": unrealized_pnl,
             "market_slug": p.market_slug,
-        })
-    });
+            "token_id": p.token_id,
+        }))
+    } else {
+        None
+    };
+
+    // Trade stats from in-memory history.
+    let closed_trades: Vec<_> = engine_state
+        .recent_trades
+        .iter()
+        .filter(|t| t.pnl.is_some())
+        .collect();
+    let total_trades = closed_trades.len();
+    let wins = closed_trades
+        .iter()
+        .filter(|t| t.pnl.unwrap() > rust_decimal_macros::dec!(0))
+        .count();
+    let win_rate = if total_trades > 0 {
+        Some((wins as f64) / (total_trades as f64))
+    } else {
+        None
+    };
 
     let last_tick_ms_ago = engine_state
         .last_tick
@@ -124,6 +158,9 @@ async fn status(State(s): State<AppState>) -> Json<Value> {
             "cooldown_until": engine_state.circuit_breaker.cooldown_until,
         },
         "book": ws_diag,
+        "total_trades": total_trades,
+        "wins": wins,
+        "win_rate": win_rate,
     }))
 }
 

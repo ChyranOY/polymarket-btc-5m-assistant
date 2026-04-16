@@ -61,11 +61,30 @@
         <div class="label">Circuit breaker</div>
         <div id="circuit">—</div>
       </div>
+      <div>
+        <div class="label">Trades</div>
+        <div id="total-trades">—</div>
+      </div>
+      <div>
+        <div class="label">Win rate</div>
+        <div id="win-rate">—</div>
+      </div>
     </section>
 
     <section class="card">
       <div class="label">Open position</div>
       <table>
+        <thead>
+          <tr>
+            <th>Entry time</th>
+            <th>Side</th>
+            <th>Entry price</th>
+            <th>Shares</th>
+            <th>Cost</th>
+            <th>Unrealized PnL</th>
+            <th>Market</th>
+          </tr>
+        </thead>
         <tbody id="position-body">
           <tr><td colspan="7" class="muted center">no open position</td></tr>
         </tbody>

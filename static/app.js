@@ -75,6 +75,10 @@ async function renderStatus() {
     : `OK (losses: ${s.circuit_breaker?.consecutive_losses ?? 0})`;
   setPill($('trading-pill'), !!s.trading_enabled, s.trading_enabled ? 'ACTIVE' : 'STOPPED');
 
+  // Trade stats
+  $('total-trades').textContent = s.total_trades != null ? `${s.total_trades} (${s.wins ?? 0}W)` : '—';
+  $('win-rate').textContent = s.win_rate != null ? `${(s.win_rate * 100).toFixed(1)}%` : '—';
+
   if (!window.__modeDirty) {
     $('mode-select').value = s.mode || 'paper';
   }
@@ -97,6 +101,8 @@ function renderPosition(p) {
     tbody.innerHTML = `<tr><td colspan="7" class="muted center">no open position</td></tr>`;
     return;
   }
+  const upnl = p.unrealized_pnl;
+  const pnlCls = upnl == null ? '' : (parseFloat(upnl) >= 0 ? 'pos' : 'neg');
   tbody.innerHTML = `
     <tr>
       <td>${fmtTimestamp(p.entry_time)}</td>
@@ -104,7 +110,7 @@ function renderPosition(p) {
       <td>${Number(p.entry_price).toFixed(4)}</td>
       <td>${Number(p.shares).toFixed(2)}</td>
       <td>${fmtUsd(p.contract_size)}</td>
-      <td>MFE ${fmtUsd(p.max_unrealized_pnl)} / MAE ${fmtUsd(p.min_unrealized_pnl)}</td>
+      <td class="pos-pnl ${pnlCls}">${fmtUsd(upnl)}</td>
       <td class="muted">${p.market_slug}</td>
     </tr>
   `;

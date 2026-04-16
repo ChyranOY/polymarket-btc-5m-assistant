@@ -64,6 +64,9 @@ pub struct EngineState {
     pub circuit_breaker: CircuitBreaker,
     pub last_tick: Option<DateTime<Utc>>,
     pub last_skip: Option<String>,
+    /// Slug of the most recently closed trade. Entry gate blocks re-entry into the same
+    /// 5m market — one trade per market cycle.
+    pub last_traded_slug: Option<String>,
     pub recent_trades: Vec<Trade>, // small in-memory cache for the UI
 }
 
@@ -79,6 +82,7 @@ impl Default for EngineState {
             circuit_breaker: CircuitBreaker::default(),
             last_tick: None,
             last_skip: None,
+            last_traded_slug: None,
             recent_trades: Vec::new(),
         }
     }
@@ -114,6 +118,7 @@ impl EngineState {
             }
         }
         self.position = None;
+        self.last_traded_slug = Some(trade.market_slug.clone());
         self.recent_trades.push(trade);
         // cap recent trades in-memory
         let max = 100;
