@@ -2,7 +2,7 @@ use crate::config::AppConfig;
 use crate::data::clob_rest::{ClobRest, PriceSide};
 use crate::data::clob_ws::ClobWs;
 use crate::engine::entry::{evaluate_entry, EntryDecision};
-use crate::engine::exit::{evaluate_exit, ExitDecision};
+use crate::engine::exit::{evaluate_exit, ExitDecision, ExitReason};
 use crate::engine::sizing::{kelly_size, size_trade};
 use crate::engine::state::EngineState;
 use crate::error::Result;
@@ -99,19 +99,56 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
                 .bid_for(position.side)
                 .unwrap_or(snapshot.price_for(position.side));
             let executor = h.executor.read().await.clone();
-            let res = executor
-                .close_position(CloseRequest {
-                    position: position.clone(),
-                    exit_reason: reason.as_str().into(),
-                    mark_price: mark,
-                })
-                .await?;
 
-            let trade = finalize_trade(&position, &snapshot, mark, reason.as_str(), &res, now);
+            // MarketRolled means the old market has settled — you can't sell on a
+            // closed market. Instead, redeem the tokens at their settlement payout:
+            // $1/share if our side won (mark > 0.50), $0 if it lost.
+            let (trade, log_action) = if matches!(reason, ExitReason::MarketRolled) {
+                let won = mark > dec!(0.50);
+                let settlement_price = if won { dec!(1) } else { dec!(0) };
+                let pnl = (settlement_price - position.entry_price) * position.shares;
+                let fees = dec!(0); // no trading fees on redemption
+
+                if won {
+                    match executor
+                        .redeem_winnings(&position.token_id, position.shares)
+                        .await
+                    {
+                        Ok(credited) => tracing::info!(
+                            credited = %credited,
+                            "auto-claim: redeemed winning tokens"
+                        ),
+                        Err(e) => tracing::warn!(err = %e, "auto-claim: redeem failed"),
+                    }
+                }
+
+                let trade = build_settled_trade(
+                    &position,
+                    settlement_price,
+                    pnl,
+                    fees,
+                    if won { "market_rolled_won" } else { "market_rolled_lost" },
+                    now,
+                );
+                (trade, "position settled (auto-claim)")
+            } else {
+                // Normal exit (StopLoss, SettlementImminent, KillSwitch) — sell at mark.
+                let res = executor
+                    .close_position(CloseRequest {
+                        position: position.clone(),
+                        exit_reason: reason.as_str().into(),
+                        mark_price: mark,
+                    })
+                    .await?;
+                let trade =
+                    finalize_trade(&position, &snapshot, mark, reason.as_str(), &res, now);
+                (trade, "position closed")
+            };
+
             if let Err(e) = h.supabase.upsert_trade(&trade).await {
                 tracing::warn!(err = %e, "supabase upsert (close) failed");
             }
-
+            let pnl_display = trade.pnl.unwrap_or(dec!(0));
             {
                 let mut state = h.state.lock().await;
                 state.record_trade_closed(trade, now);
@@ -119,8 +156,8 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
             tracing::info!(
                 slug = %snapshot.market_slug,
                 reason = %reason.as_str(),
-                pnl = %res.pnl,
-                "position closed"
+                pnl = %pnl_display,
+                log_action,
             );
             return Ok(());
         }
@@ -356,6 +393,48 @@ fn finalize_trade(
             json!({
                 "exit_slug": snapshot.market_slug,
                 "exit_fees": close.fees_paid.to_string(),
+            })
+            .to_string(),
+        ),
+        created_at: pos.entry_time,
+        updated_at: now,
+    }
+}
+
+/// Build a trade record for a position that settled at the market's resolution price
+/// (auto-claim path). Used when MarketRolled fires and we can't sell — we redeem instead.
+fn build_settled_trade(
+    pos: &crate::model::OpenPosition,
+    settlement_price: Decimal,
+    pnl: Decimal,
+    fees: Decimal,
+    reason: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Trade {
+    Trade {
+        id: pos.id.clone(),
+        timestamp: pos.entry_time,
+        status: TradeStatus::Closed,
+        side: pos.side,
+        mode: pos.mode,
+        entry_price: pos.entry_price,
+        shares: pos.shares,
+        contract_size: pos.contract_size,
+        entry_time: pos.entry_time,
+        market_slug: pos.market_slug.clone(),
+        entry_phase: None,
+        exit_price: Some(settlement_price),
+        exit_time: Some(now),
+        exit_reason: Some(reason.to_string()),
+        pnl: Some(pnl),
+        max_unrealized_pnl: pos.max_unrealized_pnl,
+        min_unrealized_pnl: pos.min_unrealized_pnl,
+        entry_gate_snapshot: None,
+        extra_json: Some(
+            json!({
+                "settlement": true,
+                "won": settlement_price > dec!(0.50),
+                "fees": fees.to_string(),
             })
             .to_string(),
         ),
