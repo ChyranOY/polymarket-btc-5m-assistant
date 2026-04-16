@@ -68,6 +68,7 @@ async function renderStatus() {
   $('time-left').textContent = fmtTimeLeft(s.market?.time_left_sec);
   $('balance').textContent = fmtUsd(s.balance?.available_usd);
   $('daily-pnl').textContent = fmtUsd(s.daily_pnl);
+  $('total-pnl').textContent = fmtUsd(s.total_pnl);
   $('last-tick').textContent = fmtTimeAgo(s.last_tick_ms_ago);
   $('last-skip').textContent = s.last_skip || (s.trading_enabled ? 'ELIGIBLE' : '—');
   $('circuit').textContent = s.circuit_breaker?.cooldown_until

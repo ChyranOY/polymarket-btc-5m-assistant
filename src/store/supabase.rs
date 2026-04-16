@@ -135,6 +135,41 @@ impl SupabaseClient {
         }
     }
 
+    /// Fetch recent closed trades for a mode. Used to hydrate in-memory stats
+    /// (total trades, win rate, recent_trades cache) on boot.
+    pub async fn fetch_recent_closed_trades(
+        &self,
+        mode: Mode,
+        limit: usize,
+    ) -> Result<Vec<Trade>> {
+        let Some(url) = self.rest("trades") else { return Ok(Vec::new()) };
+        let resp = self
+            .http
+            .get(&url)
+            .query(&[
+                ("status", "eq.CLOSED".to_string()),
+                ("mode", format!("eq.{}", mode.as_str())),
+                ("order", "exitTime.desc".to_string()),
+                ("limit", limit.to_string()),
+            ])
+            .send()
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(BotError::Supabase { status: status.as_u16(), body });
+        }
+        let rows: Vec<Value> = resp.json().await?;
+        let mut trades = Vec::with_capacity(rows.len());
+        for row in rows {
+            match serde_json::from_value::<Trade>(row) {
+                Ok(t) => trades.push(t),
+                Err(e) => tracing::debug!(err = %e, "skipping unparseable trade row"),
+            }
+        }
+        Ok(trades)
+    }
+
     /// Most recent OPEN trade for the given mode — used for boot-time reconciliation
     /// after a redeploy wipes in-memory state.
     pub async fn fetch_open_trade(&self, mode: Mode) -> Result<Option<Trade>> {

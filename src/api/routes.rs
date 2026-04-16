@@ -120,7 +120,7 @@ async fn status(State(s): State<AppState>) -> Json<Value> {
         None
     };
 
-    // Trade stats from in-memory history.
+    // Trade stats from in-memory history (hydrated from Supabase on boot).
     let closed_trades: Vec<_> = engine_state
         .recent_trades
         .iter()
@@ -136,6 +136,10 @@ async fn status(State(s): State<AppState>) -> Json<Value> {
     } else {
         None
     };
+    let total_pnl: rust_decimal::Decimal = closed_trades
+        .iter()
+        .filter_map(|t| t.pnl)
+        .sum();
 
     let last_tick_ms_ago = engine_state
         .last_tick
@@ -162,6 +166,7 @@ async fn status(State(s): State<AppState>) -> Json<Value> {
         "total_trades": total_trades,
         "wins": wins,
         "win_rate": win_rate,
+        "total_pnl": total_pnl,
     }))
 }
 

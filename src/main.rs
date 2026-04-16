@@ -169,6 +169,17 @@ async fn boot_reconcile(
         Ok(None) => {}
         Err(e) => tracing::warn!(err = %e, "reconcile: fetch_open_trade failed"),
     }
+
+    // 3) Hydrate recent_trades from Supabase so stats (total trades, win rate) are
+    // accurate from the first poll, not just from trades closed this session.
+    match supabase.fetch_recent_closed_trades(mode, 100).await {
+        Ok(trades) => {
+            let count = trades.len();
+            state.recent_trades = trades;
+            tracing::info!(count, "reconcile: recent_trades hydrated from Supabase");
+        }
+        Err(e) => tracing::warn!(err = %e, "reconcile: recent_trades hydrate failed"),
+    }
 }
 
 /// On SIGTERM/SIGINT: stop accepting entries, try to close any open position
