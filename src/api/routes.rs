@@ -293,8 +293,12 @@ async fn set_mode(
                 StatusCode::BAD_REQUEST,
                 "live credentials not configured".to_string(),
             ))?;
-            let live = LiveExecutor::new(creds, s.engine.clob.clone())
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            let live = LiveExecutor::new(
+                creds,
+                s.engine.clob.clone(),
+                s.engine.cfg.polymarket.chain_id,
+            )
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             Arc::new(live)
         }
     };
