@@ -6,5 +6,6 @@ pub mod error;
 pub mod exec;
 pub mod market;
 pub mod model;
+pub mod signing;
 pub mod store;
 pub mod time_utils;

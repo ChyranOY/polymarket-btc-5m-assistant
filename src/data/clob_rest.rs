@@ -136,6 +136,143 @@ impl ClobRest {
         Ok(dec)
     }
 
+    // ---- Private endpoints (require ClobAuth) ----
+
+    /// Submit a signed order to the CLOB. Returns the order ID on success.
+    pub async fn post_order(
+        &self,
+        auth: &crate::signing::api_auth::ClobAuth,
+        order_body: &serde_json::Value,
+    ) -> Result<String> {
+        let url = format!("{}/orders", self.clob_host);
+        let body_str = serde_json::to_string(order_body)?;
+        let headers = auth.headers("POST", "/orders", &body_str);
+        let resp = self
+            .http
+            .post(&url)
+            .headers(headers)
+            .header("Content-Type", "application/json")
+            .body(body_str)
+            .send()
+            .await?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(BotError::Clob(format!("POST /orders {} {}", status.as_u16(), text)));
+        }
+        let v: serde_json::Value = serde_json::from_str(&text)?;
+        let order_id = v
+            .get("orderID")
+            .or_else(|| v.get("id"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        Ok(order_id)
+    }
+
+    /// Poll the status of a submitted order.
+    pub async fn get_order(
+        &self,
+        auth: &crate::signing::api_auth::ClobAuth,
+        order_id: &str,
+    ) -> Result<serde_json::Value> {
+        let path = format!("/orders/{order_id}");
+        let url = format!("{}{}", self.clob_host, path);
+        let headers = auth.headers("GET", &path, "");
+        let resp = self
+            .http
+            .get(&url)
+            .headers(headers)
+            .send()
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(BotError::Clob(format!("GET /orders/{order_id} {} {}", status.as_u16(), body)));
+        }
+        Ok(resp.json().await?)
+    }
+
+    /// Cancel an open order.
+    pub async fn cancel_order(
+        &self,
+        auth: &crate::signing::api_auth::ClobAuth,
+        order_id: &str,
+    ) -> Result<()> {
+        let path = format!("/orders/{order_id}");
+        let url = format!("{}{}", self.clob_host, path);
+        let headers = auth.headers("DELETE", &path, "");
+        let resp = self
+            .http
+            .delete(&url)
+            .headers(headers)
+            .send()
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(BotError::Clob(format!("DELETE /orders/{order_id} {} {}", status.as_u16(), body)));
+        }
+        Ok(())
+    }
+
+    /// Get USDC balance + allowance for the authenticated user.
+    pub async fn balance_allowance(
+        &self,
+        auth: &crate::signing::api_auth::ClobAuth,
+    ) -> Result<(Decimal, Decimal)> {
+        let path = "/balance-allowance?asset_type=COLLATERAL";
+        let url = format!("{}{}", self.clob_host, path);
+        let headers = auth.headers("GET", path, "");
+        let resp = self
+            .http
+            .get(&url)
+            .headers(headers)
+            .send()
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(BotError::Clob(format!("/balance-allowance {} {}", status.as_u16(), body)));
+        }
+        let v: serde_json::Value = resp.json().await?;
+        let balance = v
+            .get("balance")
+            .and_then(|b| b.as_str())
+            .and_then(|s| Decimal::from_str(s).ok())
+            .unwrap_or_default();
+        let allowance = v
+            .get("allowance")
+            .and_then(|a| a.as_str())
+            .and_then(|s| Decimal::from_str(s).ok())
+            .unwrap_or_default();
+        Ok((balance, allowance))
+    }
+
+    /// Get open positions for the authenticated user.
+    pub async fn positions(
+        &self,
+        auth: &crate::signing::api_auth::ClobAuth,
+    ) -> Result<Vec<serde_json::Value>> {
+        let path = "/positions";
+        let url = format!("{}{}", self.clob_host, path);
+        let headers = auth.headers("GET", path, "");
+        let resp = self
+            .http
+            .get(&url)
+            .headers(headers)
+            .send()
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(BotError::Clob(format!("/positions {} {}", status.as_u16(), body)));
+        }
+        Ok(resp.json().await?)
+    }
+
+    // ---- Public endpoints ----
+
     pub async fn book(&self, token_id: &str) -> Result<OrderBook> {
         let url = format!("{}/book", self.clob_host);
         let resp = self

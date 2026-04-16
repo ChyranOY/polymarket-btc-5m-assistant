@@ -1,5 +1,6 @@
 use crate::engine::tick::EngineHandle;
 use crate::exec::Executor;
+use crate::exec::live::LiveExecutor;
 use crate::exec::paper::PaperExecutor;
 use crate::model::Mode;
 use axum::{
@@ -288,10 +289,13 @@ async fn set_mode(
             Arc::new(paper)
         }
         Mode::Live => {
-            return Err((
-                StatusCode::NOT_IMPLEMENTED,
-                "live executor not yet available (task 12)".into(),
-            ));
+            let creds = s.engine.cfg.live_creds.as_ref().ok_or((
+                StatusCode::BAD_REQUEST,
+                "live credentials not configured".to_string(),
+            ))?;
+            let live = LiveExecutor::new(creds, s.engine.clob.clone())
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            Arc::new(live)
         }
     };
     *s.engine.executor.write().await = new_exec;
