@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Polymarket BTC 5m</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Polymarket BTC 5m</h1>
+      <span id="version" class="muted"></span>
+    </header>
+
+    <section class="card">
+      <div class="row">
+        <div>
+          <div class="label">Mode</div>
+          <select id="mode-select">
+            <option value="paper">PAPER</option>
+            <option value="live">LIVE</option>
+          </select>
+        </div>
+        <div>
+          <div class="label">Trading</div>
+          <span id="trading-pill" class="pill stopped">STOPPED</span>
+        </div>
+        <div>
+          <button id="btn-start">Start</button>
+          <button id="btn-stop">Stop</button>
+        </div>
+        <div class="token-box">
+          <div class="label">Control token</div>
+          <input id="control-token" type="password" placeholder="paste token" />
+        </div>
+      </div>
+    </section>
+
+    <section class="card grid">
+      <div>
+        <div class="label">Market</div>
+        <div id="market-slug">—</div>
+        <div id="time-left" class="muted">—</div>
+      </div>
+      <div>
+        <div class="label">Balance</div>
+        <div id="balance">—</div>
+      </div>
+      <div>
+        <div class="label">Daily PnL</div>
+        <div id="daily-pnl">—</div>
+      </div>
+      <div>
+        <div class="label">Last tick</div>
+        <div id="last-tick">—</div>
+      </div>
+      <div>
+        <div class="label">Skip reason</div>
+        <div id="last-skip" class="muted">—</div>
+      </div>
+      <div>
+        <div class="label">Circuit breaker</div>
+        <div id="circuit">—</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="label">Open position</div>
+      <table>
+        <tbody id="position-body">
+          <tr><td colspan="7" class="muted center">no open position</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <div class="row" style="justify-content: space-between; align-items: center;">
+        <div class="label" style="margin: 0;">Recent trades</div>
+        <button id="btn-refresh-trades" title="Refetch from Supabase">Refresh</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Mode</th>
+            <th>Side</th>
+            <th>Entry</th>
+            <th>Exit</th>
+            <th>Shares</th>
+            <th>PnL</th>
+            <th>Reason</th>
+          </tr>
+        </thead>
+        <tbody id="trades-body">
+          <tr><td colspan="8" class="muted center">no trades yet</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

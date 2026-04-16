@@ -1,0 +1,19 @@
+target/
+.git/
+.github/
+.claude/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Local state
+tmp_ledger.json
+live_trading/
+logs/
+*.log
+
+# Build scratch
+node_modules/
+.DS_Store

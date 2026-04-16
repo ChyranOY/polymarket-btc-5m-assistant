@@ -1,0 +1,86 @@
+:root {
+  --bg: #0c0d10;
+  --fg: #d7d9dc;
+  --muted: #7a808a;
+  --card: #14161b;
+  --line: #21242b;
+  --accent: #78d7ff;
+  --green: #5cc072;
+  --red: #e67878;
+}
+* { box-sizing: border-box; }
+html, body { background: var(--bg); color: var(--fg); margin: 0; padding: 0; }
+body {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.4;
+}
+header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+header h1 { font-size: 15px; margin: 0; letter-spacing: 0.02em; }
+.muted { color: var(--muted); }
+.center { text-align: center; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 12px 14px;
+  margin: 12px 16px;
+}
+.row { display: flex; gap: 20px; align-items: flex-end; flex-wrap: wrap; }
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
+}
+.label {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 4px;
+}
+
+button, select, input {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  padding: 6px 10px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 12px;
+}
+button:hover { border-color: var(--accent); cursor: pointer; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+input { min-width: 240px; }
+
+.token-box { margin-left: auto; }
+
+.pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+.pill.active { background: rgba(92, 192, 114, 0.18); color: var(--green); }
+.pill.stopped { background: rgba(230, 120, 120, 0.18); color: var(--red); }
+
+table { width: 100%; border-collapse: collapse; }
+th, td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+}
+th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; }
+.pos-pnl { font-weight: 600; }
+.pos-pnl.pos { color: var(--green); }
+.pos-pnl.neg { color: var(--red); }

@@ -1,0 +1,334 @@
+use crate::config::AppConfig;
+use crate::data::clob_rest::{ClobRest, PriceSide};
+use crate::data::clob_ws::ClobWs;
+use crate::engine::entry::{evaluate_entry, EntryDecision};
+use crate::engine::exit::{evaluate_exit, ExitDecision};
+use crate::engine::sizing::size_trade;
+use crate::engine::state::EngineState;
+use crate::error::Result;
+use crate::exec::{CloseRequest, Executor, OpenRequest};
+use crate::market::scheduler::{MarketMeta, MarketTracker};
+use crate::model::{MarketSnapshot, Mode, Trade, TradeStatus};
+use crate::store::supabase::SupabaseClient;
+use chrono::Utc;
+use rust_decimal::Decimal;
+use rust_decimal_macros::dec;
+use serde_json::json;
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
+
+/// How fresh a WS book snapshot must be to bypass the REST fallback.
+const BOOK_FRESHNESS_SEC: i64 = 5;
+
+pub struct EngineHandle {
+    pub state: Arc<Mutex<EngineState>>,
+    pub executor: Arc<RwLock<Arc<dyn Executor>>>,
+    pub tracker: MarketTracker,
+    pub clob: Arc<ClobRest>,
+    pub clob_ws: Option<ClobWs>,
+    pub supabase: Arc<SupabaseClient>,
+    pub cfg: Arc<AppConfig>,
+}
+
+impl EngineHandle {
+    pub async fn current_mode(&self) -> Mode {
+        self.executor.read().await.mode()
+    }
+}
+
+pub async fn run_tick_loop(handle: Arc<EngineHandle>) {
+    let tick = tokio::time::Duration::from_secs(1);
+    loop {
+        let started = tokio::time::Instant::now();
+        if let Err(e) = run_one(&handle).await {
+            tracing::warn!(err = %e, "tick error");
+        }
+        // Guarantee forward progress — sleep the remainder of the tick window.
+        let elapsed = started.elapsed();
+        if elapsed < tick {
+            tokio::time::sleep(tick - elapsed).await;
+        }
+    }
+}
+
+pub async fn run_one(h: &EngineHandle) -> Result<()> {
+    let now = Utc::now();
+    let market = match h.tracker.current().await {
+        Some(m) => m,
+        None => {
+            tracing::trace!("tick: no market yet");
+            return Ok(());
+        }
+    };
+
+    let snapshot = build_snapshot(&h.clob, h.clob_ws.as_ref(), &market).await?;
+
+    // Update MFE/MAE on an open position regardless of exit decision, and roll the
+    // daily PnL counter if we've crossed a PST day boundary since the last tick.
+    {
+        let mut state = h.state.lock().await;
+        state.last_tick = Some(now);
+        state.maybe_roll_daily_pnl(now);
+        if let Some(pos) = state.position.as_mut() {
+            let mark = snapshot
+                .bid_for(pos.side)
+                .unwrap_or(snapshot.price_for(pos.side));
+            pos.update_mfe_mae(mark);
+        }
+    }
+
+    // If we hold a position, check exits first.
+    let held = {
+        let state = h.state.lock().await;
+        state.position.clone()
+    };
+
+    if let Some(position) = held {
+        let state_snapshot = h.state.lock().await.clone();
+        let decision = evaluate_exit(
+            &state_snapshot,
+            &position,
+            &snapshot,
+            &h.cfg.trading,
+            now,
+        );
+        drop(state_snapshot);
+
+        if let ExitDecision::Exit(reason) = decision {
+            let mark = snapshot
+                .bid_for(position.side)
+                .unwrap_or(snapshot.price_for(position.side));
+            let executor = h.executor.read().await.clone();
+            let res = executor
+                .close_position(CloseRequest {
+                    position: position.clone(),
+                    exit_reason: reason.as_str().into(),
+                    mark_price: mark,
+                })
+                .await?;
+
+            let trade = finalize_trade(&position, &snapshot, mark, reason.as_str(), &res, now);
+            if let Err(e) = h.supabase.upsert_trade(&trade).await {
+                tracing::warn!(err = %e, "supabase upsert (close) failed");
+            }
+
+            {
+                let mut state = h.state.lock().await;
+                state.record_trade_closed(trade, now);
+            }
+            tracing::info!(
+                slug = %snapshot.market_slug,
+                reason = %reason.as_str(),
+                pnl = %res.pnl,
+                "position closed"
+            );
+            return Ok(());
+        }
+    } else {
+        // No position: consider entering.
+        let state_snapshot = h.state.lock().await.clone();
+        let decision = evaluate_entry(&state_snapshot, &snapshot, &h.cfg.trading, now);
+        drop(state_snapshot);
+
+        match decision {
+            EntryDecision::Skip(reason) => {
+                h.state.lock().await.last_skip = Some(reason.as_str().into());
+            }
+            EntryDecision::Enter(order) => {
+                let balance = {
+                    let executor = h.executor.read().await.clone();
+                    executor.balance().await?
+                };
+                let shares = size_trade(balance.available_usd, order.price, &h.cfg.trading);
+                if shares <= dec!(0) {
+                    h.state.lock().await.last_skip =
+                        Some("sizing_returned_zero".into());
+                    return Ok(());
+                }
+
+                let req = OpenRequest {
+                    side: order.side,
+                    market_slug: snapshot.market_slug.clone(),
+                    market_end_date: snapshot.end_date,
+                    token_id: snapshot.token_id_for(order.side).to_string(),
+                    quoted_price: order.price,
+                    shares,
+                };
+                let executor = h.executor.read().await.clone();
+                let open = executor.open_position(req).await?;
+                let trade = new_open_trade(&open.position, &snapshot, now);
+                if let Err(e) = h.supabase.upsert_trade(&trade).await {
+                    tracing::warn!(err = %e, "supabase upsert (open) failed");
+                }
+                {
+                    let mut state = h.state.lock().await;
+                    state.position = Some(open.position.clone());
+                    state.last_skip = None;
+                }
+                tracing::info!(
+                    slug = %snapshot.market_slug,
+                    side = %order.side.as_str(),
+                    shares = %open.position.shares,
+                    fill = %open.fill_price,
+                    "position opened"
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn build_snapshot(
+    clob: &ClobRest,
+    ws: Option<&ClobWs>,
+    market: &MarketMeta,
+) -> Result<MarketSnapshot> {
+    // Prefer the WS-maintained book state when fresh. Only fall back to REST if
+    // either side is missing or stale (WS disconnected for a few seconds).
+    let now = Utc::now();
+    let (up_ws, dn_ws) = match ws {
+        Some(w) => (
+            w.peek(&market.up_token_id).await,
+            w.peek(&market.down_token_id).await,
+        ),
+        None => (None, None),
+    };
+
+    let fresh = |snap: &Option<_>| {
+        snap.as_ref()
+            .map(|s: &crate::data::clob_ws::BookSnapshot| {
+                (now - s.updated_at).num_seconds() <= BOOK_FRESHNESS_SEC
+            })
+            .unwrap_or(false)
+    };
+
+    let (mut up_ask, mut up_bid) = if fresh(&up_ws) {
+        let s = up_ws.as_ref().unwrap();
+        (s.best_ask, s.best_bid)
+    } else {
+        (None, None)
+    };
+    let (mut dn_ask, mut dn_bid) = if fresh(&dn_ws) {
+        let s = dn_ws.as_ref().unwrap();
+        (s.best_ask, s.best_bid)
+    } else {
+        (None, None)
+    };
+
+    // REST fallback — only make the requests we actually need.
+    if up_ask.is_none() {
+        up_ask = clob.price(&market.up_token_id, PriceSide::Buy).await.ok();
+    }
+    if up_bid.is_none() {
+        up_bid = clob.price(&market.up_token_id, PriceSide::Sell).await.ok();
+    }
+    if dn_ask.is_none() {
+        dn_ask = clob.price(&market.down_token_id, PriceSide::Buy).await.ok();
+    }
+    if dn_bid.is_none() {
+        dn_bid = clob.price(&market.down_token_id, PriceSide::Sell).await.ok();
+    }
+
+    let up_mid = midpoint(up_ask, up_bid).unwrap_or(dec!(0.5));
+    let dn_mid = midpoint(dn_ask, dn_bid).unwrap_or(dec!(0.5));
+
+    Ok(MarketSnapshot {
+        market_slug: market.slug.clone(),
+        up_token_id: market.up_token_id.clone(),
+        down_token_id: market.down_token_id.clone(),
+        end_date: market.end_date,
+        up_price: up_mid,
+        down_price: dn_mid,
+        up_ask,
+        down_ask: dn_ask,
+        up_bid,
+        down_bid: dn_bid,
+        fetched_at: now,
+    })
+}
+
+fn midpoint(ask: Option<Decimal>, bid: Option<Decimal>) -> Option<Decimal> {
+    match (ask, bid) {
+        (Some(a), Some(b)) => Some((a + b) / dec!(2)),
+        (Some(v), None) | (None, Some(v)) => Some(v),
+        _ => None,
+    }
+}
+
+fn new_open_trade(
+    pos: &crate::model::OpenPosition,
+    snapshot: &MarketSnapshot,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Trade {
+    Trade {
+        id: pos.id.clone(),
+        timestamp: now,
+        status: TradeStatus::Open,
+        side: pos.side,
+        mode: pos.mode,
+        entry_price: pos.entry_price,
+        shares: pos.shares,
+        contract_size: pos.contract_size,
+        entry_time: pos.entry_time,
+        market_slug: snapshot.market_slug.clone(),
+        entry_phase: None,
+        exit_price: None,
+        exit_time: None,
+        exit_reason: None,
+        pnl: None,
+        max_unrealized_pnl: pos.max_unrealized_pnl,
+        min_unrealized_pnl: pos.min_unrealized_pnl,
+        entry_gate_snapshot: Some(
+            json!({
+                "up_ask": snapshot.up_ask.map(|d| d.to_string()),
+                "down_ask": snapshot.down_ask.map(|d| d.to_string()),
+                "time_left_sec": snapshot.time_left_sec(now),
+            })
+            .to_string(),
+        ),
+        extra_json: None,
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+fn finalize_trade(
+    pos: &crate::model::OpenPosition,
+    snapshot: &MarketSnapshot,
+    _mark_price: Decimal,
+    reason: &str,
+    close: &crate::exec::CloseResult,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Trade {
+    Trade {
+        id: pos.id.clone(),
+        timestamp: pos.entry_time,
+        status: TradeStatus::Closed,
+        side: pos.side,
+        mode: pos.mode,
+        entry_price: pos.entry_price,
+        shares: pos.shares,
+        contract_size: pos.contract_size,
+        entry_time: pos.entry_time,
+        market_slug: pos.market_slug.clone(),
+        entry_phase: None,
+        exit_price: Some(close.exit_price),
+        exit_time: Some(close.exit_time),
+        exit_reason: Some(reason.to_string()),
+        pnl: Some(close.pnl),
+        max_unrealized_pnl: pos.max_unrealized_pnl,
+        min_unrealized_pnl: pos.min_unrealized_pnl,
+        entry_gate_snapshot: None,
+        extra_json: Some(
+            json!({
+                "exit_slug": snapshot.market_slug,
+                "exit_fees": close.fees_paid.to_string(),
+            })
+            .to_string(),
+        ),
+        created_at: pos.entry_time,
+        updated_at: now,
+    }
+}
+

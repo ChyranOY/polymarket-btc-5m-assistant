@@ -1,205 +1,154 @@
-# Polymarket BTC 5m Assistant
+# Polymarket BTC 5m Assistant (Rust)
 
-A high-frequency trading bot for Polymarket **"Bitcoin Up or Down" 5-minute** contracts. Monitors BTC price movements, calculates trading signals using technical indicators (RSI, MACD, VWAP), and executes trades in both **paper trading mode** (simulated) and **live trading mode** (CLOB via Polymarket API).
+Small, fast Rust bot for Polymarket's 5-minute BTC Up/Down contracts. Paper-mode first,
+live-mode planned. All trades land in the shared dashboard Supabase so existing analytics
+keep working.
 
-## Features
+## Status
 
-### Dual-Mode Trading
-- **Paper mode**: Simulated fills using Polymarket orderbook data, local JSON ledger
-- **Live mode**: Real CLOB execution via Polymarket API with full order lifecycle management
+Built (working):
+- Paper executor, event-driven market rollover, entry/exit pure-fns, HTTP API, static web UI.
+- CLOB WS book feed — primary price source; REST `/price` only fires as fallback.
+- `cargo test` — 39 unit tests + 2 integration tests pass.
 
-### Market Data & Signals
-- Auto-selects latest 5m Polymarket market (or pin via `POLYMARKET_SLUG`)
-- BTC reference price from Chainlink (Polymarket live feed + on-chain Polygon fallback)
-- Coinbase spot price for impulse/basis comparisons
-- Kraken REST for candle seeding/backfill
-- 1-minute candles built from ticks with warm-start backfill
+Not yet built (follow-ups):
+- Live executor (EIP-712 order signing via `alloy`) — scaffolded but not implemented.
+- `signal_ticks` batched writer.
 
-### Technical Indicators
-- **Heiken Ashi** (trend confirmation with consecutive candle count)
-- **RSI** with slope detection (momentum + direction)
-- **MACD** with histogram delta (momentum strength + acceleration)
-- **VWAP** with slope and distance (mean reversion + trend)
-- Market regime detection (Oversold / Ranging / Overbought)
-
-### Trading Controls
-- 24 entry blockers (risk, time, indicator, market quality)
-- 8 exit conditions (rollover, probability flip, take profit, max loss, settlement, trailing TP)
-- Dynamic bankroll-based position sizing with min/max bounds
-- Circuit breaker (consecutive loss cooldown)
-- Daily PnL kill-switch with midnight PT reset and manual override
-- Weekend tightening (stricter thresholds when markets are thin)
-
-### Analytics & Optimization
-- **Period analytics**: Performance by day, week, and trading session
-- **Segmented views**: Win rate / profit factor by entry phase, session, market regime
-- **Advanced metrics**: Sharpe ratio, Sortino ratio, max drawdown (USD + %)
-- **Backtest harness**: Replay historical trades with modified thresholds
-- **Grid search optimizer**: Test parameter combinations, ranked by profit factor
-- **Suggestion engine**: Analyzes blocker frequency, suggests threshold adjustments with projected impact
-
-### Live Trading Hardening
-- Full order lifecycle tracking (SUBMITTED -> PENDING -> FILLED -> MONITORING -> EXITED)
-- Position reconciliation (local vs. CLOB state comparison every tick)
-- Fee-aware position sizing
-- Retry with exponential backoff (1s -> 2s -> 4s) + circuit breaker for CLOB failures
-
-### Infrastructure & Reliability
-- **SQLite persistence**: Structured trade store with 20+ fields per trade (JSON ledger fallback)
-- **Webhook alerts**: Slack/Discord notifications for critical events (kill-switch, crash, circuit breaker)
-- **Crash recovery**: PID lock detection, state persistence, automatic restoration on restart
-- **Zero-downtime deployment**: Trading lock for instance coordination, graceful SIGTERM drain
-- **Health endpoint**: `/health` for load balancer probes
-
-### Dashboard
-- Three-tab web UI (Dashboard, Analytics, Optimizer)
-- Real-time status with 1.5s polling
-- Compact status bar (Mode, Trading, Kill-switch, SQLite, Webhooks, Uptime)
-- Trade history with filtering (limit, reason, side, losses only)
-- Equity curve chart, drawdown chart
-- Kill-switch progress bar with override button
-- Order lifecycle badges, sync indicator dot
-- Instance locking for multi-server production
-
-## Requirements
-
-- **Node.js 18+** (recommended: 20 LTS)
-- **npm** (bundled with Node.js)
-- **better-sqlite3** (optional, for structured trade persistence)
-
-## Quick Start
+## Quick start (paper mode)
 
 ```bash
-# 1. Clone
-git clone <repo-url>
-cd polymarket-btc-5m-assistant
-
-# 2. Install
-npm install
-
-# 3. Configure (optional)
 cp .env.example .env
-# Edit .env with your settings
-
-# 4. Run pre-flight checks
-npm run preflight
-
-# 5. Start
-npm start
-
-# 6. Open dashboard
-# http://localhost:3000
+# Edit .env: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (optional), CONTROL_TOKEN (optional)
+cargo run --release
+# Open http://localhost:3000/ in a browser
 ```
 
-## Configuration
+By default `TRADING_MODE=paper` and `TRADING_ENABLED_ON_BOOT=false`, so the bot boots
+idle. Paste the CONTROL_TOKEN (if set) in the UI and click Start.
 
-All configuration is via environment variables (or `.env` file). See `src/config.js` for the full list.
+## Deploy to Digital Ocean App Platform
 
-### Essential Settings
+Push-to-deploy via the committed `.do/app.yaml` and `Dockerfile`.
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `POLYMARKET_AUTO_SELECT_LATEST` | Auto-pick latest 5m market | `true` |
-| `POLYGON_RPC_URL` | Chainlink BTC price feed | `https://polygon-rpc.com` |
-| `STARTING_BALANCE` | Paper trading bankroll | `1000` |
-| `STAKE_PCT` | Position size as % of balance | `0.08` (8%) |
-| `DAILY_LOSS_LIMIT` | Kill-switch threshold (USD) | `50` |
-| `UI_PORT` | Dashboard port | `8080` |
+1. **Fork / push this repo to GitHub.**
+2. Edit `.do/app.yaml` and replace `<github-owner>/polymarket-btc-5m-assistant` with
+   the real repo slug.
+3. Install `doctl` and authenticate (`doctl auth init`). First deploy:
+   ```bash
+   doctl apps create --spec .do/app.yaml
+   ```
+   …or paste the YAML into the DO web console under *Apps → Create App → Import App Spec*.
+4. In the console → **Settings → App-Level Environment Variables**, paste values for
+   every `type: SECRET` key:
+   - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `CONTROL_TOKEN` (required)
+   - `PRIVATE_KEY`, `CLOB_API_KEY`, `CLOB_SECRET`, `CLOB_PASSPHRASE`, `FUNDER_ADDRESS`
+     (leave empty while running paper)
+5. Wait for the first build (~4–6 min — Rust compile dominates). Tail logs:
+   ```bash
+   doctl apps logs <app-id> --follow
+   ```
+   Look for `polymarket-btc-5m boot ... supabase_ready=true`, `clob_ws: connected`,
+   `market: initial slug=btc-updown-5m-...`.
+6. Open the app URL from the console → dashboard loads → paste your `CONTROL_TOKEN`
+   → click **Start**. A subsequent `git push` redeploys automatically.
 
-### Live Trading
+**Important deployment behaviors**
+- **Single instance**: `instance_count: 1`. The bot is stateful (one open position
+  at a time). Never scale horizontally.
+- **Ephemeral storage**: `paper_ledger.json` is lost on each redeploy. That's fine —
+  `boot_reconcile` in `src/main.rs` hydrates `daily_pnl` from Supabase on every boot
+  and marks any abandoned `OPEN` trade as `exitReason=abandoned_by_restart`.
+- **SIGTERM graceful close**: On every redeploy DO sends `SIGTERM`. The bot flips
+  `trading_enabled=false`, tries to close an open position (20s budget), and patches
+  the Supabase row to `CLOSED` with `exitReason=shutdown`. Then exits.
+- **Port**: `$PORT` (set by DO to match `http_port`) overrides `HTTP_PORT`. Both work locally.
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `LIVE_TRADING_ENABLED` | Enable live CLOB trading | `false` |
-| `FUNDER_ADDRESS` | CLOB funder wallet | (required) |
-| `LIVE_MAX_PER_TRADE_USD` | Max trade size | `7` |
-| `LIVE_MAX_DAILY_LOSS_USD` | Live daily loss limit | `30` |
+## Project layout
 
-### Monitoring
+```
+Cargo.toml
+rust-toolchain.toml
+src/
+  main.rs                         # tokio runtime, wiring
+  lib.rs                          # re-exports modules for integration tests
+  config.rs                       # env parsing
+  error.rs                        # thiserror enum
+  time_utils.rs                   # PST hours / weekend check
+  model.rs                        # Trade, OpenPosition, MarketSnapshot, Side, Mode
+  data/
+    gamma.rs                      # Gamma /events?series_id client
+    clob_rest.rs                  # CLOB /price and /book
+  engine/
+    entry.rs / exit.rs / sizing.rs  # pure fns (heavily tested)
+    state.rs                      # EngineState + circuit breaker
+    tick.rs                       # 1s tick loop orchestration
+  exec/
+    mod.rs                        # Executor trait, Open/Close req/result
+    paper.rs                      # PaperExecutor (fee + slippage + ledger)
+  store/
+    supabase.rs                   # PostgREST client for trades + signal_ticks
+  market/
+    scheduler.rs                  # event-driven rollover (tokio::sleep_until)
+  api/
+    routes.rs                     # axum: /health /status /trades /positions /trading/* /mode
+static/
+  index.html / app.js / style.css # minimal dashboard (~300 lines total)
+tests/
+  paper_flow.rs                   # end-to-end paper open/close
+```
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `WEBHOOK_URL` | Slack/Discord webhook URL | (optional) |
-| `WEBHOOK_TYPE` | `slack` or `discord` | (optional) |
-| `DATA_DIR` | Data directory for SQLite, state files | `./data` |
+## Entry gate (7 `SkipReason`s)
 
-For complete configuration reference, proxy setup, and deployment guide, see [DEPLOYMENT.md](./DEPLOYMENT.md).
+```
+TradingDisabled | OpenPositionExists | OutsideTradingHours | MarketNotAlive
+| CheapSideOutOfRange | PricesUnavailable | CircuitBreakerTripped
+```
 
-## Testing
+v1 edge: buy the cheap side (ask ∈ [0.15, 0.45]) during PST 06:00–17:00 weekdays,
+≥ 1.5 min to settlement.
+
+## Exit gate (4 `ExitReason`s)
+
+```
+StopLoss (pnl ≤ -30% of contract_size)
+| SettlementImminent (< 60s left)
+| MarketRolled (new slug AND past old end_date)
+| ManualKillSwitch
+```
+
+## HTTP API
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| GET    | `/health`          | — | `{ ok, version, uptime_s }` |
+| GET    | `/status`          | — | engine + market + balance + last skip |
+| GET    | `/trades?limit=20` | — | Supabase pass-through; falls back to in-memory cache |
+| GET    | `/positions`       | — | current open position (≤1 in v1) |
+| POST   | `/trading/start`   | Bearer `CONTROL_TOKEN` | enable trading |
+| POST   | `/trading/stop`    | Bearer `CONTROL_TOKEN` | disable trading |
+| POST   | `/mode`            | Bearer `CONTROL_TOKEN` | `{ "mode": "paper" \| "live" }` |
+| GET    | `/ui/*`            | — | static dashboard |
+
+If `CONTROL_TOKEN` is empty, all POSTs are unauthenticated — OK for localhost, not for
+a public deployment.
+
+## Known environmental note (2026-04)
+
+Polymarket's `btc-up-or-down-5m` series had no active events when this repo was built
+(`curl gamma-api.polymarket.com/events?series_id=10684&active=true&closed=false` → empty).
+The bot handles this cleanly: the scheduler retries every 2s, and `/status.market` stays
+`null`. When the series comes back online (or is migrated to a new `series_id`), set
+`POLYMARKET_SERIES_ID` in `.env`.
+
+## Tests
 
 ```bash
-# Run all tests (unit + integration)
-npm test
-
-# Pre-flight check (tests + env validation)
-npm run preflight
+cargo test           # 37 tests total (35 unit + 2 integration)
+cargo check          # fast type-check
+cargo build --release
 ```
 
-## Architecture
+## License
 
-```
-src/
-  domain/           Pure functions (no side effects)
-    entryGate.js      24 entry blockers
-    exitEvaluator.js  8 exit conditions
-    sizing.js         Dynamic trade size
-    killSwitch.js     Kill-switch logic
-    orderLifecycle.js Order state machine
-    retryPolicy.js    Error classification + retry
-    reconciliation.js Position reconciliation
-    backtester.js     Trade replay engine
-    optimizer.js      Grid search
-
-  application/      Orchestration + state
-    TradingEngine.js  Main loop orchestrator
-    TradingState.js   Mutable session state
-    ModeManager.js    Paper/Live toggle
-
-  infrastructure/   External I/O
-    executors/        PaperExecutor, LiveExecutor
-    persistence/      SQLite trade store
-    webhooks/         Slack/Discord alerting
-    recovery/         Crash detection + state persistence
-    deployment/       Trading lock, graceful shutdown
-
-  services/         Application services
-    analyticsService.js   Trade analytics
-    backtestService.js    Backtest orchestration
-    suggestionService.js  Threshold suggestions
-
-  ui/               Dashboard
-    index.html, script.js, style.css, analytics.js
-    server.js         Express API routes
-```
-
-## API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check for load balancers |
-| `/api/status` | GET | Engine state + signals + entry debug |
-| `/api/trades` | GET | Paper trade history |
-| `/api/analytics` | GET | Period analytics + advanced metrics |
-| `/api/trading/start` | POST | Enable trading |
-| `/api/trading/stop` | POST | Disable trading |
-| `/api/mode` | POST | Switch paper/live mode |
-| `/api/backtest` | POST | Run backtest with custom params |
-| `/api/optimizer` | POST | Run grid search optimizer |
-| `/api/kill-switch/status` | GET | Daily PnL vs. limit |
-| `/api/kill-switch/override` | POST | Override kill-switch |
-| `/api/metrics` | GET | Operational metrics |
-| `/api/diagnostics` | GET | Entry blocker diagnostics |
-
-## Documentation
-
-- **[DEPLOYMENT.md](./DEPLOYMENT.md)** - Production deployment guide, DigitalOcean setup, troubleshooting
-- **[CHANGELOG.md](./CHANGELOG.md)** - Release history
-- **[CLAUDE.md](./CLAUDE.md)** - Codebase reference for Claude Code
-
-## Safety
-
-This is not financial advice. Use at your own risk. Always start in paper mode and validate with the backtest harness before enabling live trading.
-
----
-
-created by @krajekis
+Private. Not open source.

@@ -1,0 +1,37 @@
+[package]
+name = "polymarket-btc-5m"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+tokio-tungstenite = { version = "0.23", features = ["rustls-tls-webpki-roots"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+axum = "0.7"
+tower-http = { version = "0.5", features = ["trace", "cors", "fs"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.9"
+dotenvy = "0.15"
+thiserror = "1"
+anyhow = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+rust_decimal = { version = "1", features = ["serde"] }
+rust_decimal_macros = "1"
+alloy = { version = "0.3", features = ["signer-local", "sol-types"] }
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+futures-util = "0.3"
+async-trait = "0.1"
+
+[dev-dependencies]
+mockito = "1"
+tokio-test = "0.4"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

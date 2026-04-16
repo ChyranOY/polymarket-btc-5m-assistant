@@ -1,0 +1,80 @@
+# Digital Ocean App Platform spec.
+# After pushing to GitHub: `doctl apps create --spec .do/app.yaml` for first deploy,
+# then `doctl apps update <app-id> --spec .do/app.yaml` for spec changes. Code pushes
+# to `main` auto-redeploy via the GitHub integration (deploy_on_push: true).
+#
+# Before deploying:
+#   1. Replace <github-owner>/<repo> below with the real slug.
+#   2. In the DO console, fill every SECRET env after the first deploy fails with
+#      "missing env". Secrets can't be committed here.
+#   3. Mirror the series id / series slug if Polymarket migrates them.
+
+name: polymarket-btc-5m
+region: nyc
+
+services:
+  - name: bot
+    dockerfile_path: Dockerfile
+    source_dir: /
+    github:
+      repo: <github-owner>/polymarket-btc-5m-assistant
+      branch: main
+      deploy_on_push: true
+
+    http_port: 3000
+    instance_count: 1             # bot is stateful (single open position at a time) — never scale horizontally
+    instance_size_slug: apps-s-1vcpu-1gb
+
+    health_check:
+      http_path: /health
+      initial_delay_seconds: 15
+      period_seconds: 30
+      timeout_seconds: 5
+      success_threshold: 1
+      failure_threshold: 3
+
+    # Public configuration — safe to commit.
+    envs:
+      - key: TRADING_MODE
+        value: paper
+        scope: RUN_TIME
+      - key: TRADING_ENABLED_ON_BOOT
+        value: "false"
+        scope: RUN_TIME
+      - key: POLYMARKET_SERIES_ID
+        value: "10684"
+        scope: RUN_TIME
+      - key: POLYMARKET_SERIES_SLUG
+        value: btc-up-or-down-5m
+        scope: RUN_TIME
+      - key: RUST_LOG
+        value: "info,polymarket_btc_5m=debug"
+        scope: RUN_TIME
+
+      # Secrets — values pasted in DO console (scope RUN_TIME + SECRET).
+      - key: SUPABASE_URL
+        scope: RUN_TIME
+        type: SECRET
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: CONTROL_TOKEN
+        scope: RUN_TIME
+        type: SECRET
+
+      # Live-trading credentials (leave unset while running paper mode).
+      - key: PRIVATE_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: CLOB_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: CLOB_SECRET
+        scope: RUN_TIME
+        type: SECRET
+      - key: CLOB_PASSPHRASE
+        scope: RUN_TIME
+        type: SECRET
+      - key: FUNDER_ADDRESS
+        scope: RUN_TIME
+        type: SECRET
