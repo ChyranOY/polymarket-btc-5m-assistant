@@ -140,6 +140,7 @@ impl SupabaseClient {
     pub async fn fetch_recent_closed_trades(
         &self,
         mode: Mode,
+        slug_prefix: &str,
         limit: usize,
     ) -> Result<Vec<Trade>> {
         let Some(url) = self.rest("trades") else { return Ok(Vec::new()) };
@@ -149,6 +150,7 @@ impl SupabaseClient {
             .query(&[
                 ("status", "eq.CLOSED".to_string()),
                 ("mode", format!("eq.{}", mode.as_str())),
+                ("marketSlug", format!("like.{slug_prefix}*")),
                 ("order", "exitTime.desc".to_string()),
                 ("limit", limit.to_string()),
             ])
@@ -172,7 +174,7 @@ impl SupabaseClient {
 
     /// Most recent OPEN trade for the given mode — used for boot-time reconciliation
     /// after a redeploy wipes in-memory state.
-    pub async fn fetch_open_trade(&self, mode: Mode) -> Result<Option<Trade>> {
+    pub async fn fetch_open_trade(&self, mode: Mode, slug_prefix: &str) -> Result<Option<Trade>> {
         let Some(url) = self.rest("trades") else { return Ok(None) };
         let resp = self
             .http
@@ -180,6 +182,7 @@ impl SupabaseClient {
             .query(&[
                 ("status", "eq.OPEN".to_string()),
                 ("mode", format!("eq.{}", mode.as_str())),
+                ("marketSlug", format!("like.{slug_prefix}*")),
                 ("order", "entryTime.desc".to_string()),
                 ("limit", "1".to_string()),
             ])
@@ -204,6 +207,7 @@ impl SupabaseClient {
     pub async fn sum_realized_pnl_since(
         &self,
         mode: Mode,
+        slug_prefix: &str,
         since: DateTime<Utc>,
     ) -> Result<Decimal> {
         let Some(url) = self.rest("trades") else { return Ok(Decimal::ZERO) };
@@ -213,6 +217,7 @@ impl SupabaseClient {
             .query(&[
                 ("status", "eq.CLOSED".to_string()),
                 ("mode", format!("eq.{}", mode.as_str())),
+                ("marketSlug", format!("like.{slug_prefix}*")),
                 ("exitTime", format!("gte.{}", since.to_rfc3339())),
                 ("select", "pnl".to_string()),
             ])

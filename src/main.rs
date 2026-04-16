@@ -72,7 +72,8 @@ async fn main() -> Result<()> {
     let mut state0 = engine::state::EngineState::default();
     state0.trading_enabled = cfg.trading.enabled_on_boot;
     state0.balance = cfg.trading.starting_balance;
-    boot_reconcile(&mut state0, &supabase, cfg.trading.mode).await;
+    let slug_prefix = "btc-updown-5m-";
+    boot_reconcile(&mut state0, &supabase, cfg.trading.mode, slug_prefix).await;
     let state = Arc::new(Mutex::new(state0));
 
     let handle = Arc::new(engine::tick::EngineHandle {
@@ -127,6 +128,7 @@ async fn boot_reconcile(
     state: &mut engine::state::EngineState,
     supabase: &store::supabase::SupabaseClient,
     mode: Mode,
+    slug_prefix: &str,
 ) {
     if !supabase.enabled() {
         return;
@@ -136,7 +138,7 @@ async fn boot_reconcile(
 
     // 1) Hydrate daily_pnl from today's closed trades (PST day boundary).
     let midnight_pst = midnight_pst_utc(now);
-    match supabase.sum_realized_pnl_since(mode, midnight_pst).await {
+    match supabase.sum_realized_pnl_since(mode, slug_prefix, midnight_pst).await {
         Ok(sum) => {
             state.daily_pnl = sum;
             tracing::info!(daily_pnl = %sum, since = %midnight_pst, "reconcile: daily pnl hydrated");
@@ -148,7 +150,7 @@ async fn boot_reconcile(
     // we treat it as abandoned — the in-memory position didn't survive the restart,
     // so patch the row as CLOSED with a sentinel reason and move on. Live mode (not
     // yet implemented) would need to query CLOB /positions to reconstruct real state.
-    match supabase.fetch_open_trade(mode).await {
+    match supabase.fetch_open_trade(mode, slug_prefix).await {
         Ok(Some(t)) => {
             tracing::warn!(
                 trade_id = %t.id,
@@ -172,7 +174,7 @@ async fn boot_reconcile(
 
     // 3) Hydrate recent_trades from Supabase so stats (total trades, win rate) are
     // accurate from the first poll, not just from trades closed this session.
-    match supabase.fetch_recent_closed_trades(mode, 10_000).await {
+    match supabase.fetch_recent_closed_trades(mode, slug_prefix, 10_000).await {
         Ok(trades) => {
             let count = trades.len();
             state.recent_trades = trades;
