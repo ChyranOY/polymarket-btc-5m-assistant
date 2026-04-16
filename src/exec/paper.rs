@@ -94,7 +94,12 @@ impl PaperExecutor {
 #[async_trait]
 impl Executor for PaperExecutor {
     async fn open_position(&self, req: OpenRequest) -> Result<OpenResult> {
-        let fill_price = self.slippage_entry(req.quoted_price);
+        // With a limit order (Kelly), fill at the limit price (no slippage — you either
+        // fill at your price or don't fill). Without, simulate slippage on the ask.
+        let fill_price = match req.limit_price {
+            Some(lp) => lp,
+            None => self.slippage_entry(req.quoted_price),
+        };
         let notional = fill_price * req.shares;
         let fees = notional * self.fee_rate;
         let total_cost = notional + fees;
@@ -171,6 +176,16 @@ impl Executor for PaperExecutor {
         })
     }
 
+    async fn redeem_winnings(&self, _token_id: &str, shares: Decimal) -> Result<Decimal> {
+        // Paper mode: winning tokens redeem at $1 each. Just credit the balance.
+        let mut guard = self.inner.lock().await;
+        let proceeds = shares; // $1 per winning share
+        guard.balance += proceeds;
+        self.persist_locked(&guard).await?;
+        tracing::info!(shares = %shares, proceeds = %proceeds, "paper: redeemed winning tokens");
+        Ok(proceeds)
+    }
+
     fn mode(&self) -> Mode {
         Mode::Paper
     }
@@ -200,6 +215,7 @@ mod tests {
             market_end_date: Utc::now() + Duration::minutes(5),
             token_id: "1".into(),
             quoted_price: dec!(0.25),
+            limit_price: None,
             shares: dec!(100),
         };
         let open = ex.open_position(req).await.unwrap();
@@ -230,6 +246,7 @@ mod tests {
             market_end_date: Utc::now() + Duration::minutes(5),
             token_id: "1".into(),
             quoted_price: dec!(0.25),
+            limit_price: None,
             shares: dec!(100),
         };
         let open = ex.open_position(req).await.unwrap();
@@ -257,6 +274,7 @@ mod tests {
                 market_end_date: Utc::now() + Duration::minutes(5),
                 token_id: "1".into(),
                 quoted_price: dec!(0.25),
+                limit_price: None,
                 shares: dec!(50),
             };
             ex.open_position(req).await.unwrap();

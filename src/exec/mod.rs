@@ -12,7 +12,8 @@ pub struct OpenRequest {
     pub market_slug: String,
     pub market_end_date: DateTime<Utc>,
     pub token_id: String,
-    pub quoted_price: Decimal, // ask we saw when deciding to enter
+    pub quoted_price: Decimal,       // ask we saw when deciding to enter
+    pub limit_price: Option<Decimal>, // Kelly limit price (None = fill at ask)
     pub shares: Decimal,
 }
 
@@ -43,5 +44,8 @@ pub trait Executor: Send + Sync {
     async fn open_position(&self, req: OpenRequest) -> Result<OpenResult>;
     async fn close_position(&self, req: CloseRequest) -> Result<CloseResult>;
     async fn balance(&self) -> Result<Balance>;
+    /// Redeem winning conditional tokens after a market settles. Returns the USDC amount
+    /// credited. Implementations may no-op (paper) or call the CTF contract (live).
+    async fn redeem_winnings(&self, token_id: &str, shares: Decimal) -> Result<Decimal>;
     fn mode(&self) -> Mode;
 }

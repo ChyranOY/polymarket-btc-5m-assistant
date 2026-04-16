@@ -33,6 +33,7 @@ async fn open_then_profitable_close_updates_balance() {
             market_end_date: Utc::now() + Duration::minutes(4),
             token_id: "1".into(),
             quoted_price: dec!(0.25),
+            limit_price: None,
             shares: dec!(50),
         })
         .await
@@ -71,6 +72,7 @@ async fn open_then_losing_close_reduces_balance() {
             market_end_date: Utc::now() + Duration::minutes(4),
             token_id: "1".into(),
             quoted_price: dec!(0.25),
+            limit_price: None,
             shares: dec!(50),
         })
         .await

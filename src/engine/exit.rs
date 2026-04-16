@@ -90,6 +90,14 @@ mod tests {
             trading_hours_end_pst: 17,
             allow_weekends: false,
             paper_fee_rate: dec!(0.02),
+            max_entry_spread: dec!(0.04),
+            kelly: crate::config::KellyConfig {
+                enabled: false,
+                estimated_prob: dec!(0.50),
+                fraction: dec!(0.25),
+                max_pct: dec!(0.08),
+                edge_capture: dec!(0.40),
+            },
         }
     }
 

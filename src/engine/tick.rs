@@ -3,7 +3,7 @@ use crate::data::clob_rest::{ClobRest, PriceSide};
 use crate::data::clob_ws::ClobWs;
 use crate::engine::entry::{evaluate_entry, EntryDecision};
 use crate::engine::exit::{evaluate_exit, ExitDecision};
-use crate::engine::sizing::size_trade;
+use crate::engine::sizing::{kelly_size, size_trade};
 use crate::engine::state::EngineState;
 use crate::error::Result;
 use crate::exec::{CloseRequest, Executor, OpenRequest};
@@ -134,12 +134,42 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
             EntryDecision::Skip(reason) => {
                 h.state.lock().await.last_skip = Some(reason.as_str().into());
             }
-            EntryDecision::Enter(order) => {
+            EntryDecision::Enter(mut order) => {
                 let balance = {
                     let executor = h.executor.read().await.clone();
                     executor.balance().await?
                 };
-                let shares = size_trade(balance.available_usd, order.price, &h.cfg.trading);
+
+                // Size the trade: Kelly (with limit price) or flat percentage.
+                let (shares, limit_price) = if h.cfg.trading.kelly.enabled {
+                    match kelly_size(
+                        balance.available_usd,
+                        order.price,
+                        h.cfg.trading.paper_fee_rate,
+                        &h.cfg.trading.kelly,
+                    ) {
+                        Some(kr) => {
+                            order.limit_price = Some(kr.limit_price);
+                            tracing::debug!(
+                                edge = %kr.edge,
+                                raw_kelly = %kr.raw_kelly,
+                                stake = %kr.stake,
+                                limit = %kr.limit_price,
+                                "kelly sizing"
+                            );
+                            (kr.shares, Some(kr.limit_price))
+                        }
+                        None => {
+                            h.state.lock().await.last_skip =
+                                Some("negative_expected_value".into());
+                            return Ok(());
+                        }
+                    }
+                } else {
+                    let s = size_trade(balance.available_usd, order.price, &h.cfg.trading);
+                    (s, None)
+                };
+
                 if shares <= dec!(0) {
                     h.state.lock().await.last_skip =
                         Some("sizing_returned_zero".into());
@@ -152,6 +182,7 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
                     market_end_date: snapshot.end_date,
                     token_id: snapshot.token_id_for(order.side).to_string(),
                     quoted_price: order.price,
+                    limit_price,
                     shares,
                 };
                 let executor = h.executor.read().await.clone();
@@ -170,6 +201,7 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
                     side = %order.side.as_str(),
                     shares = %open.position.shares,
                     fill = %open.fill_price,
+                    limit = ?limit_price,
                     "position opened"
                 );
             }

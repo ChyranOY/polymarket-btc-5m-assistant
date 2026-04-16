@@ -15,6 +15,8 @@ pub enum SkipReason {
     OutsideTradingHours,
     MarketNotAlive,
     CheapSideOutOfRange,
+    SpreadTooWide,
+    NegativeExpectedValue,
     PricesUnavailable,
     CircuitBreakerTripped,
 }
@@ -28,6 +30,8 @@ impl SkipReason {
             SkipReason::OutsideTradingHours => "outside_trading_hours",
             SkipReason::MarketNotAlive => "market_not_alive",
             SkipReason::CheapSideOutOfRange => "cheap_side_out_of_range",
+            SkipReason::SpreadTooWide => "spread_too_wide",
+            SkipReason::NegativeExpectedValue => "negative_expected_value",
             SkipReason::PricesUnavailable => "prices_unavailable",
             SkipReason::CircuitBreakerTripped => "circuit_breaker_tripped",
         }
@@ -38,6 +42,7 @@ impl SkipReason {
 pub struct EntryOrder {
     pub side: Side,
     pub price: Decimal,
+    pub limit_price: Option<Decimal>,
 }
 
 #[derive(Debug, Clone)]
@@ -112,10 +117,22 @@ pub fn evaluate_entry(
         }
     };
 
-    match pick {
-        Some((side, price)) => EntryDecision::Enter(EntryOrder { side, price }),
-        None => EntryDecision::Skip(SkipReason::CheapSideOutOfRange),
+    let Some((side, price)) = pick else {
+        return EntryDecision::Skip(SkipReason::CheapSideOutOfRange);
+    };
+
+    // Spread gate: bid-ask must be tight enough for a good fill.
+    if let (Some(ask), Some(bid)) = (snapshot.ask_for(side), snapshot.bid_for(side)) {
+        if ask - bid > cfg.max_entry_spread {
+            return EntryDecision::Skip(SkipReason::SpreadTooWide);
+        }
     }
+
+    EntryDecision::Enter(EntryOrder {
+        side,
+        price,
+        limit_price: None, // tick loop fills this in via Kelly if enabled
+    })
 }
 
 #[cfg(test)]
@@ -141,6 +158,14 @@ mod tests {
             trading_hours_end_pst: 17,
             allow_weekends: false,
             paper_fee_rate: dec!(0.02),
+            max_entry_spread: dec!(0.04),
+            kelly: crate::config::KellyConfig {
+                enabled: false,
+                estimated_prob: dec!(0.50),
+                fraction: dec!(0.25),
+                max_pct: dec!(0.08),
+                edge_capture: dec!(0.40),
+            },
         }
     }
 

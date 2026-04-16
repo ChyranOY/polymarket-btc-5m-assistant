@@ -50,6 +50,15 @@ pub struct LiveCreds {
 }
 
 #[derive(Debug, Clone)]
+pub struct KellyConfig {
+    pub enabled: bool,
+    pub estimated_prob: Decimal,
+    pub fraction: Decimal,
+    pub max_pct: Decimal,
+    pub edge_capture: Decimal,
+}
+
+#[derive(Debug, Clone)]
 pub struct TradingConfig {
     pub mode: Mode,
     pub enabled_on_boot: bool,
@@ -60,11 +69,13 @@ pub struct TradingConfig {
     pub stop_loss_pct: Decimal,
     pub cheap_side_min: Decimal,
     pub cheap_side_max: Decimal,
+    pub max_entry_spread: Decimal,
     pub time_left_min_minutes: f64,
     pub trading_hours_start_pst: u32,
     pub trading_hours_end_pst: u32,
     pub allow_weekends: bool,
     pub paper_fee_rate: Decimal,
+    pub kelly: KellyConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -140,11 +151,19 @@ impl AppConfig {
             stop_loss_pct: env_dec("STOP_LOSS_PCT", "0.30")?,
             cheap_side_min: env_dec("CHEAP_SIDE_MIN", "0.15")?,
             cheap_side_max: env_dec("CHEAP_SIDE_MAX", "0.45")?,
+            max_entry_spread: env_dec("MAX_ENTRY_SPREAD", "0.04")?,
             time_left_min_minutes: env_or("TIME_LEFT_MIN_MINUTES", 1.5f64)?,
             trading_hours_start_pst: env_or("TRADING_HOURS_START_PST", 6u32)?,
             trading_hours_end_pst: env_or("TRADING_HOURS_END_PST", 17u32)?,
             allow_weekends: env_or("ALLOW_WEEKENDS", false)?,
             paper_fee_rate: env_dec("PAPER_FEE_RATE", "0.02")?,
+            kelly: KellyConfig {
+                enabled: env_or("KELLY_ENABLED", false)?,
+                estimated_prob: env_dec("ESTIMATED_PROB", "0.50")?,
+                fraction: env_dec("KELLY_FRACTION", "0.25")?,
+                max_pct: env_dec("KELLY_MAX_PCT", "0.08")?,
+                edge_capture: env_dec("LIMIT_EDGE_CAPTURE", "0.40")?,
+            },
         };
 
         let supabase = SupabaseConfig {
