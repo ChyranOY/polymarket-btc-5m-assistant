@@ -239,6 +239,7 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
                 tracing::info!(
                     slug = %snapshot.market_slug,
                     side = %order.side.as_str(),
+                    phase = %order.phase.as_str(),
                     shares = %open.position.shares,
                     fill = %open.fill_price,
                     limit = ?limit_price,

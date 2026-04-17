@@ -76,6 +76,8 @@ mod tests {
             cheap_side_min: dec!(0.15),
             cheap_side_max: dec!(0.45),
             max_entry_spread: dec!(0.04),
+            cooldown_after_exit_sec: 300,
+            warmup_ticks: 0,
             time_left_min_minutes: 1.5,
             trading_hours_start_pst: 6,
             trading_hours_end_pst: 17,

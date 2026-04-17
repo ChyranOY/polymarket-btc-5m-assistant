@@ -76,6 +76,8 @@ pub struct TradingConfig {
     pub trading_hours_end_pst: u32,
     pub allow_weekends: bool,
     pub paper_fee_rate: Decimal,
+    pub cooldown_after_exit_sec: u32,
+    pub warmup_ticks: u32,
     pub kelly: KellyConfig,
 }
 
@@ -159,6 +161,8 @@ impl AppConfig {
             trading_hours_end_pst: env_or("TRADING_HOURS_END_PST", 17u32)?,
             allow_weekends: env_or("ALLOW_WEEKENDS", false)?,
             paper_fee_rate: env_dec("PAPER_FEE_RATE", "0.02")?,
+            cooldown_after_exit_sec: env_or("COOLDOWN_AFTER_EXIT_SEC", 300u32)?, // 5 min
+            warmup_ticks: env_or("WARMUP_SECS", 30u32)?,
             kelly: KellyConfig {
                 enabled: env_or("KELLY_ENABLED", false)?,
                 estimated_prob: env_dec("ESTIMATED_PROB", "0.50")?,

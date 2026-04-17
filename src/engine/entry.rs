@@ -12,6 +12,8 @@ pub enum SkipReason {
     TradingDisabled,
     OpenPositionExists,
     AlreadyTradedThisMarket,
+    CooldownActive,
+    WarmingUp,
     OutsideTradingHours,
     MarketNotAlive,
     CheapSideOutOfRange,
@@ -27,6 +29,8 @@ impl SkipReason {
             SkipReason::TradingDisabled => "trading_disabled",
             SkipReason::OpenPositionExists => "open_position_exists",
             SkipReason::AlreadyTradedThisMarket => "already_traded_this_market",
+            SkipReason::CooldownActive => "cooldown_active",
+            SkipReason::WarmingUp => "warming_up",
             SkipReason::OutsideTradingHours => "outside_trading_hours",
             SkipReason::MarketNotAlive => "market_not_alive",
             SkipReason::CheapSideOutOfRange => "cheap_side_out_of_range",
@@ -38,11 +42,41 @@ impl SkipReason {
     }
 }
 
+/// Phase of the 5-minute market cycle. Stored on the trade record for post-mortem analysis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum MarketPhase {
+    Early, // > 3 min left
+    Mid,   // 1.5 – 3 min left
+    Late,  // < 1.5 min left (entry blocked by MarketNotAlive)
+}
+
+impl MarketPhase {
+    pub fn from_minutes_left(min: f64) -> Self {
+        if min > 3.0 {
+            MarketPhase::Early
+        } else if min >= 1.5 {
+            MarketPhase::Mid
+        } else {
+            MarketPhase::Late
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MarketPhase::Early => "EARLY",
+            MarketPhase::Mid => "MID",
+            MarketPhase::Late => "LATE",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct EntryOrder {
     pub side: Side,
     pub price: Decimal,
     pub limit_price: Option<Decimal>,
+    pub phase: MarketPhase,
 }
 
 #[derive(Debug, Clone)]
@@ -71,6 +105,18 @@ pub fn evaluate_entry(
         .unwrap_or(false)
     {
         return EntryDecision::Skip(SkipReason::AlreadyTradedThisMarket);
+    }
+    // 5-minute cooldown after any exit to prevent revenge-trading on the next market.
+    if let Some(exit_time) = state.last_exit_time {
+        let cooldown_sec = cfg.cooldown_after_exit_sec as i64;
+        if (now - exit_time).num_seconds() < cooldown_sec {
+            return EntryDecision::Skip(SkipReason::CooldownActive);
+        }
+    }
+    // Warmup period after boot: let WS book + market scheduler stabilize.
+    let uptime_sec = (now - state.boot_time).num_seconds();
+    if uptime_sec < cfg.warmup_ticks as i64 {
+        return EntryDecision::Skip(SkipReason::WarmingUp);
     }
     if state.circuit_breaker_tripped(now) {
         return EntryDecision::Skip(SkipReason::CircuitBreakerTripped);
@@ -128,10 +174,12 @@ pub fn evaluate_entry(
         }
     }
 
+    let phase = MarketPhase::from_minutes_left(snapshot.time_left_minutes(now));
     EntryDecision::Enter(EntryOrder {
         side,
         price,
         limit_price: None, // tick loop fills this in via Kelly if enabled
+        phase,
     })
 }
 
@@ -159,6 +207,8 @@ mod tests {
             allow_weekends: false,
             paper_fee_rate: dec!(0.02),
             max_entry_spread: dec!(0.04),
+            cooldown_after_exit_sec: 300,
+            warmup_ticks: 0,
             kelly: crate::config::KellyConfig {
                 enabled: false,
                 estimated_prob: dec!(0.50),
@@ -202,6 +252,8 @@ mod tests {
     fn enabled_state() -> EngineState {
         let mut s = EngineState::default();
         s.trading_enabled = true;
+        // Set boot_time far enough in the past that warmup never blocks in tests.
+        s.boot_time = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
         s
     }
 

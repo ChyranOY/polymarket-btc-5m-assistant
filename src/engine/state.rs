@@ -70,6 +70,12 @@ pub struct EngineState {
     /// Slug of the most recently closed trade. Entry gate blocks re-entry into the same
     /// 5m market — one trade per market cycle.
     pub last_traded_slug: Option<String>,
+    /// Timestamp of the most recent trade exit. Entry gate enforces a cooldown period
+    /// after any exit to prevent revenge-trading on the next market.
+    pub last_exit_time: Option<DateTime<Utc>>,
+    /// Boot timestamp — entry gate blocks trading for a warmup period after startup
+    /// so the WS book and market scheduler can stabilize.
+    pub boot_time: DateTime<Utc>,
     pub recent_trades: Vec<Trade>, // small in-memory cache for the UI
 }
 
@@ -87,6 +93,8 @@ impl Default for EngineState {
             last_skip: None,
             unrealized_pnl: None,
             last_traded_slug: None,
+            last_exit_time: None,
+            boot_time: Utc::now(),
             recent_trades: Vec::new(),
         }
     }
@@ -123,6 +131,7 @@ impl EngineState {
         }
         self.position = None;
         self.last_traded_slug = Some(trade.market_slug.clone());
+        self.last_exit_time = Some(now);
         self.recent_trades.push(trade);
         // cap recent trades in-memory
         let max = 100;
