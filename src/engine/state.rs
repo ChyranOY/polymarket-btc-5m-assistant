@@ -64,6 +64,9 @@ pub struct EngineState {
     pub circuit_breaker: CircuitBreaker,
     pub last_tick: Option<DateTime<Utc>>,
     pub last_skip: Option<String>,
+    /// Current unrealized PnL, updated every tick by the engine. `/status` reads this
+    /// instead of doing its own WS book lookup (avoids key-mismatch / timing races).
+    pub unrealized_pnl: Option<Decimal>,
     /// Slug of the most recently closed trade. Entry gate blocks re-entry into the same
     /// 5m market — one trade per market cycle.
     pub last_traded_slug: Option<String>,
@@ -82,6 +85,7 @@ impl Default for EngineState {
             circuit_breaker: CircuitBreaker::default(),
             last_tick: None,
             last_skip: None,
+            unrealized_pnl: None,
             last_traded_slug: None,
             recent_trades: Vec::new(),
         }

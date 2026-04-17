@@ -74,6 +74,9 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
                 .bid_for(pos.side)
                 .unwrap_or(snapshot.price_for(pos.side));
             pos.update_mfe_mae(mark);
+            state.unrealized_pnl = Some(pos.unrealized_pnl(mark));
+        } else {
+            state.unrealized_pnl = None;
         }
     }
 

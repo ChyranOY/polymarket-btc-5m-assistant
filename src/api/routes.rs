@@ -89,46 +89,18 @@ async fn status(State(s): State<AppState>) -> Json<Value> {
         })
     });
 
-    // Compute unrealized PnL from WS book if a position is open.
-    let pos_json = if let Some(p) = engine_state.position.as_ref() {
-        // Look up the current bid for this position's token from the WS book.
-        // If the WS book has no entry for this token_id, fall back to REST price
-        // from the snapshot (up_bid / down_bid cached at the market level).
-        let ws_bid = match h.clob_ws.as_ref() {
-            Some(ws) => ws.peek(&p.token_id).await.and_then(|b| b.best_bid),
-            None => None,
-        };
-        // Fallback: use the market-level bid from the WS book diagnostic
-        // (the WS subscribes using the tracker's token IDs which may differ
-        // from the position's token_id if the market rolled mid-position).
-        let market_bid = if ws_bid.is_none() {
-            if let Some(ws) = h.clob_ws.as_ref() {
-                if let Some(m) = market.as_ref() {
-                    let tok = match p.side {
-                        crate::model::Side::Up => &m.up_token_id,
-                        crate::model::Side::Down => &m.down_token_id,
-                    };
-                    ws.peek(tok).await.and_then(|b| b.best_bid)
-                } else { None }
-            } else { None }
-        } else { None };
-        let current_bid = ws_bid.or(market_bid);
-        let unrealized_pnl = current_bid.map(|bid| (bid - p.entry_price) * p.shares);
-        Some(json!({
+    let pos_json = engine_state.position.as_ref().map(|p| {
+        json!({
             "id": p.id,
             "side": p.side.as_str(),
             "entry_price": p.entry_price,
             "shares": p.shares,
             "contract_size": p.contract_size,
             "entry_time": p.entry_time,
-            "unrealized_pnl": unrealized_pnl,
-            "current_bid": current_bid,
+            "unrealized_pnl": engine_state.unrealized_pnl,
             "market_slug": p.market_slug,
-            "token_id": p.token_id,
-        }))
-    } else {
-        None
-    };
+        })
+    });
 
     // Trade stats from in-memory history (hydrated from Supabase on boot).
     let closed_trades: Vec<_> = engine_state
