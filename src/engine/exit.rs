@@ -8,7 +8,6 @@ use serde::Serialize;
 #[serde(rename_all = "snake_case")]
 pub enum ExitReason {
     StopLoss,
-    SettlementImminent,
     MarketRolled,
     ManualKillSwitch,
 }
@@ -17,7 +16,6 @@ impl ExitReason {
     pub fn as_str(&self) -> &'static str {
         match self {
             ExitReason::StopLoss => "stop_loss",
-            ExitReason::SettlementImminent => "settlement_imminent",
             ExitReason::MarketRolled => "market_rolled",
             ExitReason::ManualKillSwitch => "manual_kill_switch",
         }
@@ -29,8 +27,6 @@ pub enum ExitDecision {
     Exit(ExitReason),
     Hold,
 }
-
-const SETTLEMENT_IMMINENT_SEC: i64 = 60;
 
 pub fn evaluate_exit(
     state: &EngineState,
@@ -48,21 +44,11 @@ pub fn evaluate_exit(
         return ExitDecision::Exit(ExitReason::MarketRolled);
     }
 
+    // Stop-loss: unrealized pnl <= -(contract_size * stop_loss_pct)
     let mark = snapshot
         .bid_for(position.side)
         .unwrap_or(snapshot.price_for(position.side));
     let pnl = position.unrealized_pnl(mark);
-
-    // Settlement imminent + LOSING: bail before market settles at $0.
-    // Profitable positions ride to settlement → MarketRolled auto-claims at $1.
-    if snapshot.market_slug == position.market_slug
-        && snapshot.time_left_sec(now) < SETTLEMENT_IMMINENT_SEC
-        && pnl < rust_decimal_macros::dec!(0)
-    {
-        return ExitDecision::Exit(ExitReason::SettlementImminent);
-    }
-
-    // Stop-loss: unrealized pnl <= -(contract_size * stop_loss_pct)
     let stop_loss_threshold = -(position.contract_size * cfg.stop_loss_pct);
     if pnl <= stop_loss_threshold {
         return ExitDecision::Exit(ExitReason::StopLoss);
@@ -74,6 +60,7 @@ pub fn evaluate_exit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::KellyConfig;
     use crate::model::{Mode, Side};
     use rust_decimal_macros::dec;
 
@@ -88,13 +75,13 @@ mod tests {
             stop_loss_pct: dec!(0.30),
             cheap_side_min: dec!(0.15),
             cheap_side_max: dec!(0.45),
+            max_entry_spread: dec!(0.04),
             time_left_min_minutes: 1.5,
             trading_hours_start_pst: 6,
             trading_hours_end_pst: 17,
             allow_weekends: false,
             paper_fee_rate: dec!(0.02),
-            max_entry_spread: dec!(0.04),
-            kelly: crate::config::KellyConfig {
+            kelly: KellyConfig {
                 enabled: false,
                 estimated_prob: dec!(0.50),
                 fraction: dec!(0.25),
@@ -105,7 +92,7 @@ mod tests {
     }
 
     fn pos(slug: &str, side: Side, entry: rust_decimal::Decimal, shares: rust_decimal::Decimal) -> OpenPosition {
-        let now = Utc::now();
+        let now = chrono::Utc::now();
         OpenPosition {
             id: "t1".into(),
             side,
@@ -123,7 +110,7 @@ mod tests {
     }
 
     fn snap(slug: &str, end_in_sec: i64, up_bid: rust_decimal::Decimal) -> MarketSnapshot {
-        let now = Utc::now();
+        let now = chrono::Utc::now();
         MarketSnapshot {
             market_slug: slug.into(),
             up_token_id: "1".into(),
@@ -141,48 +128,35 @@ mod tests {
 
     #[test]
     fn stop_loss_at_minus_30pct() {
-        // Position: 100 shares @ 0.25 → contract_size = 25; -30% = -7.5
-        // Mark at 0.175 → pnl = (0.175 - 0.25) * 100 = -7.5 → exactly at threshold.
         let p = pos("m", Side::Up, dec!(0.25), dec!(100));
         let s = snap("m", 180, dec!(0.175));
         let state = EngineState::default();
-        let d = evaluate_exit(&state, &p, &s, &cfg(), Utc::now());
+        let d = evaluate_exit(&state, &p, &s, &cfg(), chrono::Utc::now());
         assert!(matches!(d, ExitDecision::Exit(ExitReason::StopLoss)));
     }
 
     #[test]
     fn stop_loss_not_tripped_above_threshold() {
         let p = pos("m", Side::Up, dec!(0.25), dec!(100));
-        let s = snap("m", 180, dec!(0.20)); // pnl = -5, above -7.5
+        let s = snap("m", 180, dec!(0.20));
         let state = EngineState::default();
-        let d = evaluate_exit(&state, &p, &s, &cfg(), Utc::now());
+        let d = evaluate_exit(&state, &p, &s, &cfg(), chrono::Utc::now());
         assert!(matches!(d, ExitDecision::Hold));
     }
 
     #[test]
-    fn settlement_imminent_exits_when_losing() {
-        // Losing: entry 0.25, mark 0.20 → pnl < 0 → should exit near settlement
+    fn losing_position_near_settlement_holds_for_volatility() {
+        // 30s left, losing — still holds. Only stop-loss or settlement can exit.
         let p = pos("m", Side::Up, dec!(0.25), dec!(100));
         let s = snap("m", 30, dec!(0.20));
         let state = EngineState::default();
-        let d = evaluate_exit(&state, &p, &s, &cfg(), Utc::now());
-        assert!(matches!(d, ExitDecision::Exit(ExitReason::SettlementImminent)));
-    }
-
-    #[test]
-    fn settlement_imminent_holds_when_profitable() {
-        // Winning: entry 0.25, mark 0.80 → pnl > 0 → ride to settlement
-        let p = pos("m", Side::Up, dec!(0.25), dec!(100));
-        let s = snap("m", 30, dec!(0.80));
-        let state = EngineState::default();
-        let d = evaluate_exit(&state, &p, &s, &cfg(), Utc::now());
+        let d = evaluate_exit(&state, &p, &s, &cfg(), chrono::Utc::now());
         assert!(matches!(d, ExitDecision::Hold));
     }
 
     #[test]
     fn rollover_fires_when_slug_changes_after_end() {
         let p = pos("old", Side::Up, dec!(0.25), dec!(100));
-        // Snapshot now shows a new slug, and now > p.market_end_date.
         let later = p.market_end_date + chrono::Duration::seconds(5);
         let s = MarketSnapshot {
             market_slug: "new".into(),
@@ -209,7 +183,7 @@ mod tests {
         let mut state = EngineState::default();
         state.kill_switch = true;
         assert!(matches!(
-            evaluate_exit(&state, &p, &s, &cfg(), Utc::now()),
+            evaluate_exit(&state, &p, &s, &cfg(), chrono::Utc::now()),
             ExitDecision::Exit(ExitReason::ManualKillSwitch)
         ));
     }
