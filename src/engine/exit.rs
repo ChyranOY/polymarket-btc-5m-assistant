@@ -48,18 +48,21 @@ pub fn evaluate_exit(
         return ExitDecision::Exit(ExitReason::MarketRolled);
     }
 
-    // Settlement imminent: <60s left on the market we're in.
+    let mark = snapshot
+        .bid_for(position.side)
+        .unwrap_or(snapshot.price_for(position.side));
+    let pnl = position.unrealized_pnl(mark);
+
+    // Settlement imminent + LOSING: bail before market settles at $0.
+    // Profitable positions ride to settlement → MarketRolled auto-claims at $1.
     if snapshot.market_slug == position.market_slug
         && snapshot.time_left_sec(now) < SETTLEMENT_IMMINENT_SEC
+        && pnl < rust_decimal_macros::dec!(0)
     {
         return ExitDecision::Exit(ExitReason::SettlementImminent);
     }
 
     // Stop-loss: unrealized pnl <= -(contract_size * stop_loss_pct)
-    let mark = snapshot
-        .bid_for(position.side)
-        .unwrap_or(snapshot.price_for(position.side));
-    let pnl = position.unrealized_pnl(mark);
     let stop_loss_threshold = -(position.contract_size * cfg.stop_loss_pct);
     if pnl <= stop_loss_threshold {
         return ExitDecision::Exit(ExitReason::StopLoss);
