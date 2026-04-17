@@ -160,12 +160,23 @@ mod tests {
     }
 
     #[test]
-    fn settlement_imminent_under_60s() {
+    fn settlement_imminent_exits_when_losing() {
+        // Losing: entry 0.25, mark 0.20 → pnl < 0 → should exit near settlement
         let p = pos("m", Side::Up, dec!(0.25), dec!(100));
-        let s = snap("m", 30, dec!(0.25));
+        let s = snap("m", 30, dec!(0.20));
         let state = EngineState::default();
         let d = evaluate_exit(&state, &p, &s, &cfg(), Utc::now());
         assert!(matches!(d, ExitDecision::Exit(ExitReason::SettlementImminent)));
+    }
+
+    #[test]
+    fn settlement_imminent_holds_when_profitable() {
+        // Winning: entry 0.25, mark 0.80 → pnl > 0 → ride to settlement
+        let p = pos("m", Side::Up, dec!(0.25), dec!(100));
+        let s = snap("m", 30, dec!(0.80));
+        let state = EngineState::default();
+        let d = evaluate_exit(&state, &p, &s, &cfg(), Utc::now());
+        assert!(matches!(d, ExitDecision::Hold));
     }
 
     #[test]
