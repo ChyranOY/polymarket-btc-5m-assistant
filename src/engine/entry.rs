@@ -75,16 +75,14 @@ pub fn evaluate_entry(
     if state.circuit_breaker_tripped(now) {
         return EntryDecision::Skip(SkipReason::CircuitBreakerTripped);
     }
-    // Trading-hours gate disabled for now to iron out bugs around the clock.
-    // Re-enable by uncommenting once the core strategy is validated.
-    // if !in_trading_hours(
-    //     now,
-    //     cfg.trading_hours_start_pst,
-    //     cfg.trading_hours_end_pst,
-    //     cfg.allow_weekends,
-    // ) {
-    //     return EntryDecision::Skip(SkipReason::OutsideTradingHours);
-    // }
+    if !in_trading_hours(
+        now,
+        cfg.trading_hours_start_pst,
+        cfg.trading_hours_end_pst,
+        cfg.allow_weekends,
+    ) {
+        return EntryDecision::Skip(SkipReason::OutsideTradingHours);
+    }
     if snapshot.time_left_minutes(now) < cfg.time_left_min_minutes {
         return EntryDecision::Skip(SkipReason::MarketNotAlive);
     }
@@ -272,7 +270,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // trading-hours gate disabled for debugging — re-enable with the gate
     fn outside_hours_skips() {
         let s = enabled_state();
         // Wed 02:00 UTC == Tue 18:00 PST (after window)
