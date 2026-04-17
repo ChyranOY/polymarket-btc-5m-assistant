@@ -177,10 +177,12 @@ impl Executor for PaperExecutor {
     }
 
     async fn redeem_winnings(&self, _token_id: &str, shares: Decimal) -> Result<Decimal> {
-        // Paper mode: winning tokens redeem at $1 each. Just credit the balance.
+        // Paper mode: winning tokens redeem at $1 each. Credit the balance and
+        // clear the internal position (the market has settled — there's nothing to hold).
         let mut guard = self.inner.lock().await;
         let proceeds = shares; // $1 per winning share
         guard.balance += proceeds;
+        guard.position = None;
         self.persist_locked(&guard).await?;
         tracing::info!(shares = %shares, proceeds = %proceeds, "paper: redeemed winning tokens");
         Ok(proceeds)
