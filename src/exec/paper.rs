@@ -42,7 +42,12 @@ impl PaperExecutor {
         let ledger_path = ledger_path.into();
         let ledger = match std::fs::read_to_string(&ledger_path) {
             Ok(s) => match serde_json::from_str::<PaperLedger>(&s) {
-                Ok(l) => {
+                Ok(mut l) => {
+                    // Only restore balance from the ledger. Position state is managed
+                    // by EngineState (reconciled from Supabase on boot). Keeping position
+                    // in both places caused a desync where the executor thought it was
+                    // still holding after a MarketRolled auto-claim.
+                    l.position = None;
                     tracing::info!(path = %ledger_path.display(), balance = %l.balance, "paper ledger loaded");
                     l
                 }
