@@ -271,7 +271,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ledger_persists_across_instances() {
+    async fn ledger_persists_balance_across_instances() {
         let path = tmp_path("persist");
         {
             let ex = PaperExecutor::new(dec!(500), dec!(0), path.clone()).unwrap();
@@ -286,11 +286,13 @@ mod tests {
             };
             ex.open_position(req).await.unwrap();
         }
-        // New instance with bigger starting balance should IGNORE seed and use persisted file.
+        // New instance: balance is restored from ledger (lower than seed because
+        // the first instance spent some). Position is NOT restored — EngineState
+        // owns position lifecycle now, reconciled from Supabase.
         let ex2 = PaperExecutor::new(dec!(99999), dec!(0), path.clone()).unwrap();
         let b = ex2.balance().await.unwrap();
         assert!(b.available_usd < dec!(500));
-        assert!(b.locked_usd > dec!(0));
+        assert_eq!(b.locked_usd, dec!(0)); // position cleared on load
         let _ = tokio::fs::remove_file(path).await;
     }
 }
