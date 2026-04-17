@@ -91,19 +91,10 @@ async fn status(State(s): State<AppState>) -> Json<Value> {
 
     // Compute unrealized PnL from WS book if a position is open.
     let pos_json = if let Some(p) = engine_state.position.as_ref() {
-        let current_bid = h
-            .clob_ws
-            .as_ref()
-            .map(|ws| {
-                // peek is async; we need the value inline. Use try_read on the underlying store.
-                let books = ws.books();
-                let guard = books.try_read();
-                guard
-                    .ok()
-                    .and_then(|g| g.get(&p.token_id).cloned())
-                    .and_then(|b| b.best_bid)
-            })
-            .flatten();
+        let current_bid = match h.clob_ws.as_ref() {
+            Some(ws) => ws.peek(&p.token_id).await.and_then(|b| b.best_bid),
+            None => None,
+        };
         let unrealized_pnl = current_bid.map(|bid| (bid - p.entry_price) * p.shares);
         Some(json!({
             "id": p.id,
