@@ -38,7 +38,6 @@ impl EngineHandle {
 
 pub async fn run_tick_loop(handle: Arc<EngineHandle>) {
     let active_tick = tokio::time::Duration::from_secs(1);
-    let idle_tick = tokio::time::Duration::from_secs(60);
     let mut was_active = true;
 
     loop {
@@ -50,12 +49,10 @@ pub async fn run_tick_loop(handle: Arc<EngineHandle>) {
             handle.cfg.trading.allow_weekends,
         );
 
-        // Off-hours: sleep, skip all API/WS calls. No exceptions — even open
-        // positions ride to settlement via the market scheduler without tick monitoring.
+        // Off-hours: sleep until the next trading window opens. No polling.
         if !in_hours {
             if was_active {
                 tracing::info!("tick: off-hours — pausing API requests and WS subscriptions");
-                // Unsubscribe from WS book feed to stop data flow.
                 if let Some(ws) = handle.clob_ws.as_ref() {
                     ws.set_subscriptions(vec![]).await;
                 }
@@ -68,7 +65,14 @@ pub async fn run_tick_loop(handle: Arc<EngineHandle>) {
                 state.maybe_roll_daily_pnl(now);
                 state.unrealized_pnl = None;
             }
-            tokio::time::sleep(idle_tick).await;
+            let wake = crate::time_utils::next_trading_open(
+                now,
+                handle.cfg.trading.trading_hours_start_pst,
+                handle.cfg.trading.allow_weekends,
+            );
+            let sleep_secs = (wake - tokio::time::Instant::now()).as_secs();
+            tracing::info!(sleep_secs, "tick: sleeping until next trading window");
+            tokio::time::sleep_until(wake).await;
             continue;
         }
 
