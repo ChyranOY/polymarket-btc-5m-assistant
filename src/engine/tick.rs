@@ -37,16 +37,60 @@ impl EngineHandle {
 }
 
 pub async fn run_tick_loop(handle: Arc<EngineHandle>) {
-    let tick = tokio::time::Duration::from_secs(1);
+    let active_tick = tokio::time::Duration::from_secs(1);
+    let idle_tick = tokio::time::Duration::from_secs(60);
+    let mut was_active = true;
+
     loop {
+        let now = Utc::now();
+        let has_position = handle.state.lock().await.position.is_some();
+        let in_hours = crate::time_utils::in_trading_hours(
+            now,
+            handle.cfg.trading.trading_hours_start_pst,
+            handle.cfg.trading.trading_hours_end_pst,
+            handle.cfg.trading.allow_weekends,
+        );
+
+        // Off-hours with no open position: sleep longer, skip all API/WS calls.
+        if !in_hours && !has_position {
+            if was_active {
+                tracing::info!("tick: off-hours — pausing API requests and WS subscriptions");
+                // Unsubscribe from WS book feed to stop data flow.
+                if let Some(ws) = handle.clob_ws.as_ref() {
+                    ws.set_subscriptions(vec![]).await;
+                }
+                was_active = false;
+            }
+            {
+                let mut state = handle.state.lock().await;
+                state.last_skip = Some("outside_trading_hours".into());
+                state.last_tick = Some(now);
+                state.maybe_roll_daily_pnl(now);
+                state.unrealized_pnl = None;
+            }
+            tokio::time::sleep(idle_tick).await;
+            continue;
+        }
+
+        // Transitioning back to active: re-subscribe WS via the market tracker.
+        if !was_active {
+            tracing::info!("tick: trading hours resumed — reconnecting");
+            if let (Some(ws), Some(meta)) =
+                (handle.clob_ws.as_ref(), handle.tracker.current().await)
+            {
+                ws.set_subscriptions(vec![meta.up_token_id, meta.down_token_id])
+                    .await;
+            }
+            was_active = true;
+        }
+
         let started = tokio::time::Instant::now();
         if let Err(e) = run_one(&handle).await {
             tracing::warn!(err = %e, "tick error");
         }
-        // Guarantee forward progress — sleep the remainder of the tick window.
         let elapsed = started.elapsed();
-        if elapsed < tick {
-            tokio::time::sleep(tick - elapsed).await;
+        if elapsed < active_tick {
+            tokio::time::sleep(active_tick - elapsed).await;
         }
     }
 }
