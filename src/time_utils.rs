@@ -61,7 +61,7 @@ pub fn next_trading_open(
             Los_Angeles
                 .from_local_datetime(&shifted)
                 .single()
-                .unwrap_or_else(|| now + Duration::hours(1))
+                .unwrap_or_else(|| (now + Duration::hours(1)).with_timezone(&Los_Angeles))
                 .with_timezone(&Utc)
         }
     };
