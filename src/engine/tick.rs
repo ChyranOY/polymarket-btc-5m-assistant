@@ -43,7 +43,6 @@ pub async fn run_tick_loop(handle: Arc<EngineHandle>) {
 
     loop {
         let now = Utc::now();
-        let has_position = handle.state.lock().await.position.is_some();
         let in_hours = crate::time_utils::in_trading_hours(
             now,
             handle.cfg.trading.trading_hours_start_pst,
@@ -51,8 +50,9 @@ pub async fn run_tick_loop(handle: Arc<EngineHandle>) {
             handle.cfg.trading.allow_weekends,
         );
 
-        // Off-hours with no open position: sleep longer, skip all API/WS calls.
-        if !in_hours && !has_position {
+        // Off-hours: sleep, skip all API/WS calls. No exceptions — even open
+        // positions ride to settlement via the market scheduler without tick monitoring.
+        if !in_hours {
             if was_active {
                 tracing::info!("tick: off-hours — pausing API requests and WS subscriptions");
                 // Unsubscribe from WS book feed to stop data flow.
