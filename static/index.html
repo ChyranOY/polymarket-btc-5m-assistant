@@ -2,130 +2,159 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Polymarket BTC 5m</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Doto:wght@400;500;700&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
     <header>
-      <h1>Polymarket BTC 5m</h1>
-      <span id="version" class="muted"></span>
+      <h1>Polymarket · BTC 5m</h1>
+      <span id="version">v—</span>
     </header>
 
-    <section class="card">
-      <div class="row">
-        <div>
-          <div class="label">Mode</div>
-          <select id="mode-select">
-            <option value="paper">PAPER</option>
-            <option value="live">LIVE</option>
-          </select>
+    <main>
+      <!-- Hero: daily PnL as the one primary element, with time-left / balance as close siblings. -->
+      <section class="hero">
+        <div class="hero-primary">
+          <div class="label">PnL · Today · PST</div>
+          <div id="daily-pnl" class="hero-value">—</div>
         </div>
-        <div>
-          <div class="label">Trading</div>
-          <span id="trading-pill" class="pill stopped">STOPPED</span>
+        <div class="hero-sub">
+          <div class="stack">
+            <div class="label">Time left</div>
+            <div id="time-left" class="value muted">—</div>
+          </div>
+          <div class="stack">
+            <div class="label">Balance</div>
+            <div id="balance" class="value">—</div>
+          </div>
+          <div class="stack">
+            <div class="label">All-time PnL</div>
+            <div id="total-pnl" class="value muted">—</div>
+          </div>
         </div>
-        <div>
-          <button id="btn-start">Start</button>
-          <button id="btn-stop">Stop</button>
+      </section>
+
+      <!-- Controls -->
+      <section class="card">
+        <div class="controls">
+          <div class="control-group">
+            <div class="label">Mode</div>
+            <select id="mode-select">
+              <option value="paper">Paper</option>
+              <option value="live">Live</option>
+            </select>
+          </div>
+          <div class="control-group">
+            <div class="label">Trading</div>
+            <span id="trading-pill" class="pill stopped">Stopped</span>
+          </div>
+          <div class="control-group">
+            <button id="btn-start" class="primary">Start</button>
+          </div>
+          <div class="control-group">
+            <button id="btn-stop">Stop</button>
+          </div>
+          <div class="control-group token-box">
+            <div class="label">Control token</div>
+            <input id="control-token" type="password" placeholder="paste token" />
+          </div>
         </div>
-        <div class="token-box">
-          <div class="label">Control token</div>
-          <input id="control-token" type="password" placeholder="paste token" />
+      </section>
+
+      <!-- Stats grid (secondary) -->
+      <section class="card">
+        <div class="grid">
+          <div>
+            <div class="label">Market</div>
+            <div id="market-slug" class="value">—</div>
+          </div>
+          <div>
+            <div class="label">Last tick</div>
+            <div id="last-tick" class="value">—</div>
+          </div>
+          <div>
+            <div class="label">Trades</div>
+            <div id="total-trades" class="value">—</div>
+          </div>
+          <div>
+            <div class="label">Win rate</div>
+            <div id="win-rate" class="value">—</div>
+          </div>
+          <div>
+            <div class="label">Circuit breaker</div>
+            <div id="circuit" class="value">—</div>
+          </div>
+          <div>
+            <div class="label">Skip reason</div>
+            <div id="last-skip" class="value muted">—</div>
+          </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <section class="card grid">
-      <div>
-        <div class="label">Market</div>
-        <div id="market-slug">—</div>
-        <div id="time-left" class="muted">—</div>
-      </div>
-      <div>
-        <div class="label">Balance</div>
-        <div id="balance">—</div>
-      </div>
-      <div>
-        <div class="label">Daily PnL (PST)</div>
-        <div id="daily-pnl">—</div>
-      </div>
-      <div>
-        <div class="label">All-time PnL</div>
-        <div id="total-pnl">—</div>
-      </div>
-      <div>
-        <div class="label">Last tick</div>
-        <div id="last-tick">—</div>
-      </div>
-      <div>
-        <div class="label">Skip reason</div>
-        <div id="last-skip" class="muted">—</div>
-      </div>
-      <div>
-        <div class="label">Circuit breaker</div>
-        <div id="circuit">—</div>
-      </div>
-      <div>
-        <div class="label">Trades</div>
-        <div id="total-trades">—</div>
-      </div>
-      <div>
-        <div class="label">Win rate</div>
-        <div id="win-rate">—</div>
-      </div>
-    </section>
+      <!-- Entry gates -->
+      <section class="card">
+        <div class="section-title">
+          <div class="label">Entry gates</div>
+          <span id="gates-summary" class="meta">—</span>
+        </div>
+        <ul id="gates-list" class="gates"></ul>
+      </section>
 
-    <section class="card">
-      <div class="row" style="justify-content: space-between; align-items: center;">
-        <div class="label" style="margin: 0;">Entry gates</div>
-        <span id="gates-summary" class="muted">—</span>
-      </div>
-      <ul id="gates-list" class="gates"></ul>
-    </section>
+      <!-- Open position -->
+      <section class="card">
+        <div class="section-title">
+          <div class="label">Open position</div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Entry</th>
+              <th>Side</th>
+              <th>Price</th>
+              <th>Shares</th>
+              <th>Cost</th>
+              <th>Unrealized</th>
+              <th>Market</th>
+            </tr>
+          </thead>
+          <tbody id="position-body">
+            <tr><td colspan="7" class="muted center">[ NONE ]</td></tr>
+          </tbody>
+        </table>
+      </section>
 
-    <section class="card">
-      <div class="label">Open position</div>
-      <table>
-        <thead>
-          <tr>
-            <th>Entry time</th>
-            <th>Side</th>
-            <th>Entry price</th>
-            <th>Shares</th>
-            <th>Cost</th>
-            <th>Unrealized PnL</th>
-            <th>Market</th>
-          </tr>
-        </thead>
-        <tbody id="position-body">
-          <tr><td colspan="7" class="muted center">no open position</td></tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section class="card">
-      <div class="row" style="justify-content: space-between; align-items: center;">
-        <div class="label" style="margin: 0;">Recent trades</div>
-        <button id="btn-refresh-trades" title="Refetch from Supabase">Refresh</button>
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>Mode</th>
-            <th>Side</th>
-            <th>Entry</th>
-            <th>Exit</th>
-            <th>Shares</th>
-            <th>PnL</th>
-            <th>Reason</th>
-          </tr>
-        </thead>
-        <tbody id="trades-body">
-          <tr><td colspan="8" class="muted center">no trades yet</td></tr>
-        </tbody>
-      </table>
-    </section>
+      <!-- Recent trades -->
+      <section class="card">
+        <div class="section-title">
+          <div class="label">Recent trades</div>
+          <button id="btn-refresh-trades" title="Refetch from Supabase">Refresh</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Mode</th>
+              <th>Side</th>
+              <th>Entry</th>
+              <th>Exit</th>
+              <th>Shares</th>
+              <th>PnL</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody id="trades-body">
+            <tr><td colspan="8" class="muted center">[ NO TRADES ]</td></tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
 
     <script src="./app.js"></script>
   </body>

@@ -28,7 +28,7 @@ function fmtUsd(n) {
   if (n == null || n === '') return '—';
   const num = typeof n === 'string' ? parseFloat(n) : n;
   if (!Number.isFinite(num)) return '—';
-  const sign = num < 0 ? '-' : '';
+  const sign = num < 0 ? '−' : '';
   return `${sign}$${Math.abs(num).toFixed(2)}`;
 }
 
@@ -41,10 +41,10 @@ function fmtTimeAgo(ms) {
 
 function fmtTimeLeft(sec) {
   if (sec == null) return '—';
-  if (sec < 0) return 'settled';
+  if (sec < 0) return '[ SETTLED ]';
   const m = Math.floor(sec / 60);
   const s = sec - m * 60;
-  return `${m}:${String(s).padStart(2, '0')} left`;
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 function fmtTimestamp(iso) {
@@ -59,6 +59,18 @@ function setPill(el, active, text) {
   el.classList.toggle('stopped', !active);
 }
 
+function setSignedValue(el, value, kind = 'hero') {
+  const num = value == null ? null : parseFloat(value);
+  const formatted = fmtUsd(value);
+  el.textContent = formatted;
+  const posClass = kind === 'hero' ? 'pos' : 'pos';
+  const negClass = kind === 'hero' ? 'neg' : 'neg';
+  el.classList.remove(posClass, negClass);
+  if (num == null || !Number.isFinite(num)) return;
+  if (num > 0) el.classList.add(posClass);
+  else if (num < 0) el.classList.add(negClass);
+}
+
 // Track whether a position was open last poll so we can detect close→refresh trades.
 let hadPositionLastPoll = false;
 
@@ -67,17 +79,18 @@ async function renderStatus() {
   $('market-slug').textContent = s.market?.slug || '—';
   $('time-left').textContent = fmtTimeLeft(s.market?.time_left_sec);
   $('balance').textContent = fmtUsd(s.balance?.available_usd);
-  $('daily-pnl').textContent = fmtUsd(s.daily_pnl);
-  $('total-pnl').textContent = fmtUsd(s.total_pnl);
+  setSignedValue($('daily-pnl'), s.daily_pnl, 'hero');
+  setSignedValue($('total-pnl'), s.total_pnl, 'inline');
   $('last-tick').textContent = fmtTimeAgo(s.last_tick_ms_ago);
-  $('last-skip').textContent = s.last_skip || (s.trading_enabled ? 'ELIGIBLE' : '—');
-  $('circuit').textContent = s.circuit_breaker?.cooldown_until
-    ? `COOLING (losses: ${s.circuit_breaker.consecutive_losses})`
-    : `OK (losses: ${s.circuit_breaker?.consecutive_losses ?? 0})`;
-  setPill($('trading-pill'), !!s.trading_enabled, s.trading_enabled ? 'ACTIVE' : 'STOPPED');
+  $('last-skip').textContent = s.last_skip ? `[ ${s.last_skip.toUpperCase()} ]` : (s.trading_enabled ? '[ ELIGIBLE ]' : '—');
+  const cbCooling = !!s.circuit_breaker?.cooldown_until;
+  const losses = s.circuit_breaker?.consecutive_losses ?? 0;
+  $('circuit').textContent = cbCooling ? `COOLING · ${losses}L` : `OK · ${losses}L`;
+  $('circuit').className = cbCooling ? 'value neg' : 'value';
+  setPill($('trading-pill'), !!s.trading_enabled, s.trading_enabled ? 'Active' : 'Stopped');
 
   // Trade stats
-  $('total-trades').textContent = s.total_trades != null ? `${s.total_trades} (${s.wins ?? 0}W)` : '—';
+  $('total-trades').textContent = s.total_trades != null ? `${s.total_trades} · ${s.wins ?? 0}W` : '—';
   $('win-rate').textContent = s.win_rate != null ? `${(s.win_rate * 100).toFixed(1)}%` : '—';
 
   if (!window.__modeDirty) {
@@ -85,13 +98,10 @@ async function renderStatus() {
   }
 
   renderGates(s.gates);
-  renderPosition(s.position);
+  renderPosition(s.position, s.unrealized_pnl);
 
-  // Trade list refresh logic: only when a position just closed (had one → now none).
-  // Avoids hammering /trades (and Supabase) on every status poll.
   const hasPositionNow = !!s.position;
   if (hadPositionLastPoll && !hasPositionNow) {
-    // Fire-and-forget so the status tick stays snappy.
     renderTrades();
   }
   hadPositionLastPoll = hasPositionNow;
@@ -103,29 +113,33 @@ function renderGates(report) {
   if (!report || !Array.isArray(report.gates)) {
     list.innerHTML = '';
     summary.textContent = '—';
+    summary.className = 'meta';
     return;
   }
   const failed = report.gates.filter(g => !g.pass).map(g => g.name);
-  summary.textContent = report.all_pass
-    ? 'ALL PASS'
-    : `BLOCKED: ${failed.join(', ')}`;
-  summary.className = report.all_pass ? 'pos' : 'neg';
+  if (report.all_pass) {
+    summary.textContent = '[ ALL PASS ]';
+    summary.className = 'meta pos';
+  } else {
+    summary.textContent = `[ ${failed.length} BLOCKED ]`;
+    summary.className = 'meta neg';
+  }
   list.innerHTML = report.gates.map(g => `
     <li class="gate ${g.pass ? 'pass' : 'fail'}">
-      <span class="gate-icon">${g.pass ? '✓' : '✗'}</span>
-      <span class="gate-name">${g.name}</span>
-      ${g.detail ? `<span class="gate-detail muted">${g.detail}</span>` : ''}
+      <span class="gate-icon">${g.pass ? '[+]' : '[×]'}</span>
+      <span class="gate-name">${g.name.replace(/_/g, ' ')}</span>
+      <span class="gate-detail">${g.detail ? g.detail : ''}</span>
     </li>
   `).join('');
 }
 
-function renderPosition(p) {
+function renderPosition(p, unrealized) {
   const tbody = $('position-body');
   if (!p) {
-    tbody.innerHTML = `<tr><td colspan="7" class="muted center">no open position</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="muted center">[ NONE ]</td></tr>`;
     return;
   }
-  const upnl = p.unrealized_pnl;
+  const upnl = unrealized ?? p.unrealized_pnl;
   const pnlCls = upnl == null ? '' : (parseFloat(upnl) >= 0 ? 'pos' : 'neg');
   tbody.innerHTML = `
     <tr>
@@ -145,22 +159,23 @@ async function renderTrades() {
     const rows = await api('/trades?limit=20');
     const tbody = $('trades-body');
     if (!Array.isArray(rows) || rows.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="8" class="muted center">no trades yet</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" class="muted center">[ NO TRADES ]</td></tr>`;
       return;
     }
     tbody.innerHTML = rows.map(r => {
       const pnl = r.pnl ?? null;
       const pnlCls = pnl == null ? '' : (parseFloat(pnl) >= 0 ? 'pos' : 'neg');
+      const reason = r.exitReason || (r.status === 'OPEN' ? 'OPEN' : '—');
       return `
         <tr>
           <td>${fmtTimestamp(r.entryTime || r.entry_time)}</td>
-          <td>${r.mode || '—'}</td>
+          <td>${(r.mode || '—').toUpperCase()}</td>
           <td>${r.side || '—'}</td>
           <td>${r.entryPrice ? Number(r.entryPrice).toFixed(4) : '—'}</td>
           <td>${r.exitPrice ? Number(r.exitPrice).toFixed(4) : '—'}</td>
           <td>${r.shares ? Number(r.shares).toFixed(2) : '—'}</td>
           <td class="pos-pnl ${pnlCls}">${fmtUsd(pnl)}</td>
-          <td class="muted">${r.exitReason || (r.status === 'OPEN' ? 'open' : '—')}</td>
+          <td class="muted">${reason}</td>
         </tr>
       `;
     }).join('');
@@ -204,7 +219,6 @@ function wire() {
   const input = $('control-token');
   input.value = getToken();
   input.addEventListener('change', () => setToken(input.value.trim()));
-  // Manual refresh button for the trades table — useful if Supabase got out of sync.
   const refresh = document.getElementById('btn-refresh-trades');
   if (refresh) refresh.addEventListener('click', renderTrades);
 }
@@ -221,7 +235,5 @@ async function statusTick() {
 
 wire();
 renderVersion();
-// Trades table: one initial fetch + refresh on position-closed transitions.
-// Manual refresh button in the UI for everything else.
 renderTrades();
 statusTick();
