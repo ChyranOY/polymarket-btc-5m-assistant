@@ -356,18 +356,34 @@ async fn build_snapshot(
         (None, None)
     };
 
-    // REST fallback — only make the requests we actually need.
+    // REST fallback — only make the requests we actually need. Errors are
+    // logged at debug so we can tell "REST failed" from "REST returned None"
+    // when diagnosing a "prices unavailable" stretch.
+    async fn rest_price(
+        clob: &ClobRest,
+        token: &str,
+        side: PriceSide,
+    ) -> Option<Decimal> {
+        match clob.price(token, side).await {
+            Ok(p) => Some(p),
+            Err(e) => {
+                tracing::debug!(token, ?side, err = %e, "clob /price fallback failed");
+                None
+            }
+        }
+    }
+
     if up_ask.is_none() {
-        up_ask = clob.price(&market.up_token_id, PriceSide::Buy).await.ok();
+        up_ask = rest_price(clob, &market.up_token_id, PriceSide::Buy).await;
     }
     if up_bid.is_none() {
-        up_bid = clob.price(&market.up_token_id, PriceSide::Sell).await.ok();
+        up_bid = rest_price(clob, &market.up_token_id, PriceSide::Sell).await;
     }
     if dn_ask.is_none() {
-        dn_ask = clob.price(&market.down_token_id, PriceSide::Buy).await.ok();
+        dn_ask = rest_price(clob, &market.down_token_id, PriceSide::Buy).await;
     }
     if dn_bid.is_none() {
-        dn_bid = clob.price(&market.down_token_id, PriceSide::Sell).await.ok();
+        dn_bid = rest_price(clob, &market.down_token_id, PriceSide::Sell).await;
     }
 
     let up_mid = midpoint(up_ask, up_bid).unwrap_or(dec!(0.5));

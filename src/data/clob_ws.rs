@@ -25,8 +25,20 @@ use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
-use tokio::time::{Duration, sleep};
+use tokio::time::{Duration, Instant, sleep, sleep_until};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
+
+/// Break the inner select loop if no inbound frame has arrived in this long.
+/// Polymarket streams book snapshots + pings frequently on subscribed markets,
+/// so this much silence indicates a stuck TCP socket that tokio-tungstenite
+/// can't observe. 30s is comfortably longer than the normal frame cadence.
+const READ_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Send a client ping this often whenever we have non-empty subscriptions. The
+/// point isn't keep-alive (Polymarket's traffic handles that) — it's to force
+/// a write on the socket so a dead TCP state surfaces as a send error well
+/// before the 30s read-timeout fires.
+const CLIENT_PING_INTERVAL: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone)]
 pub struct BookSnapshot {
@@ -107,7 +119,16 @@ async fn run_ws(url: String, books: BookStore, mut cmd_rx: mpsc::Receiver<WsComm
             }
         }
 
-        // Drive reads and commands until the socket errors/closes.
+        let mut last_frame_at = Instant::now();
+        let mut ping_interval = tokio::time::interval(CLIENT_PING_INTERVAL);
+        ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // The first tick of `interval` fires immediately; burn it so we don't
+        // ping the moment we connect (before the first subscribe has even been
+        // sent / acknowledged).
+        ping_interval.tick().await;
+
+        // Drive reads, commands, pings, and the read-idle watchdog until the
+        // socket errors/closes.
         let disconnect_reason = loop {
             tokio::select! {
                 biased;
@@ -130,6 +151,7 @@ async fn run_ws(url: String, books: BookStore, mut cmd_rx: mpsc::Receiver<WsComm
                     }
                 }
                 msg = ws_stream.next() => {
+                    last_frame_at = Instant::now();
                     match msg {
                         Some(Ok(Message::Text(txt))) => handle_book_msg(&books, txt.as_ref()).await,
                         Some(Ok(Message::Binary(bin))) => {
@@ -157,6 +179,19 @@ async fn run_ws(url: String, books: BookStore, mut cmd_rx: mpsc::Receiver<WsComm
                             break "stream-end";
                         }
                     }
+                }
+                _ = ping_interval.tick(), if !current_ids.is_empty() => {
+                    if let Err(e) = ws_stream.send(Message::Ping(Vec::new().into())).await {
+                        tracing::warn!(err = %e, "clob_ws: ping send failed");
+                        break "ping-send-error";
+                    }
+                }
+                _ = sleep_until(last_frame_at + READ_IDLE_TIMEOUT), if !current_ids.is_empty() => {
+                    tracing::warn!(
+                        idle_s = READ_IDLE_TIMEOUT.as_secs(),
+                        "clob_ws: no inbound frames; forcing reconnect"
+                    );
+                    break "read-idle-timeout";
                 }
             }
         };
