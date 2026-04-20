@@ -9,6 +9,12 @@ use serde_json::Value;
 use std::str::FromStr;
 use std::time::Duration;
 
+/// Matches only trades written by this Rust bot. The old JS bot shares the same
+/// `trades` table; its `entryGateSnapshot` JSON never contains `up_ask` (which is
+/// unique to `engine::tick::new_open_trade`). Apply to every read query so
+/// hydrated state / UI lists don't mix the two bots' rows.
+const RUST_ORIGIN_FILTER: &str = "like.*up_ask*";
+
 /// Thin PostgREST client for the `trades` and `signal_ticks` tables.
 /// No-ops when SUPABASE_URL is not configured — callers don't need to branch.
 #[derive(Debug, Clone)]
@@ -116,6 +122,7 @@ impl SupabaseClient {
             .get(&url)
             .query(&[
                 ("marketSlug", format!("like.{market_slug_prefix}*")),
+                ("entryGateSnapshot", RUST_ORIGIN_FILTER.to_string()),
                 ("order", "entryTime.desc".to_string()),
                 ("limit", limit.to_string()),
             ])
@@ -151,6 +158,7 @@ impl SupabaseClient {
                 ("status", "eq.CLOSED".to_string()),
                 ("mode", format!("eq.{}", mode.as_str())),
                 ("marketSlug", format!("like.{slug_prefix}*")),
+                ("entryGateSnapshot", RUST_ORIGIN_FILTER.to_string()),
                 ("order", "exitTime.desc".to_string()),
                 ("limit", limit.to_string()),
             ])
@@ -183,6 +191,7 @@ impl SupabaseClient {
                 ("status", "eq.OPEN".to_string()),
                 ("mode", format!("eq.{}", mode.as_str())),
                 ("marketSlug", format!("like.{slug_prefix}*")),
+                ("entryGateSnapshot", RUST_ORIGIN_FILTER.to_string()),
                 ("order", "entryTime.desc".to_string()),
                 ("limit", "1".to_string()),
             ])
@@ -218,6 +227,7 @@ impl SupabaseClient {
                 ("status", "eq.CLOSED".to_string()),
                 ("mode", format!("eq.{}", mode.as_str())),
                 ("marketSlug", format!("like.{slug_prefix}*")),
+                ("entryGateSnapshot", RUST_ORIGIN_FILTER.to_string()),
                 ("exitTime", format!("gte.{}", since.to_rfc3339())),
                 ("select", "pnl".to_string()),
             ])
