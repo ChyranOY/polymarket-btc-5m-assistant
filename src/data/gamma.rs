@@ -130,31 +130,36 @@ impl GammaClient {
     /// Fetch one market by slug, regardless of whether it's still open. Used by the
     /// rollover-PnL backfill binary — settled markets have `outcomePrices = ["1","0"]`
     /// or `["0","1"]`, which is authoritative for who won.
+    ///
+    /// Gamma's `/markets?slug=X` endpoint filters out `closed=true` rows by default,
+    /// so we try once with `closed=true` (settled) and fall back to the live query.
     pub async fn fetch_market_by_slug(&self, slug: &str) -> Result<Option<GammaMarket>> {
-        let url = format!("{}/markets", self.gamma_url);
-        let resp = self
-            .http
-            .get(&url)
-            .query(&[("slug", slug), ("limit", "1")])
-            .send()
-            .await?;
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(BotError::Clob(format!(
-                "gamma /markets?slug={slug} {} {}",
-                status.as_u16(),
-                body
-            )));
-        }
-        let value: Value = resp.json().await?;
-        let arr = value
-            .as_array()
-            .ok_or_else(|| BotError::parse("gamma /markets: expected array"))?;
-        for m in arr {
-            if let Ok(gm) = parse_gamma_market(m) {
-                if gm.slug == slug {
-                    return Ok(Some(gm));
+        for closed in ["true", "false"] {
+            let url = format!("{}/markets", self.gamma_url);
+            let resp = self
+                .http
+                .get(&url)
+                .query(&[("slug", slug), ("closed", closed), ("limit", "1")])
+                .send()
+                .await?;
+            let status = resp.status();
+            if !status.is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                return Err(BotError::Clob(format!(
+                    "gamma /markets?slug={slug}&closed={closed} {} {}",
+                    status.as_u16(),
+                    body
+                )));
+            }
+            let value: Value = resp.json().await?;
+            let arr = value
+                .as_array()
+                .ok_or_else(|| BotError::parse("gamma /markets: expected array"))?;
+            for m in arr {
+                if let Ok(gm) = parse_gamma_market(m) {
+                    if gm.slug == slug {
+                        return Ok(Some(gm));
+                    }
                 }
             }
         }

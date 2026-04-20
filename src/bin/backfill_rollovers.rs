@@ -139,10 +139,15 @@ async fn process_row(
         "market_rolled_lost"
     };
 
+    // 1-cent tolerance on pnl — stored values are rounded to 3–4 decimals so the
+    // derived (1-entry)*shares can differ by < $0.01 even when the settlement
+    // decision is already correct. Not worth a PATCH.
     let price_matches = current_exit_price.map(|p| p == expected_settlement).unwrap_or(false);
-    let pnl_matches = current_pnl.map(|p| p == expected_pnl).unwrap_or(false);
+    let pnl_close_enough = current_pnl
+        .map(|p| (p - expected_pnl).abs() <= dec!(0.01))
+        .unwrap_or(false);
     let reason_matches = current_reason == expected_reason;
-    if price_matches && pnl_matches && reason_matches {
+    if price_matches && pnl_close_enough && reason_matches {
         return Ok(ProcessOutcome::AlreadyCorrect);
     }
 
