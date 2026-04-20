@@ -366,6 +366,8 @@ mod tests {
             max_stake_usd: dec!(250),
             starting_balance: dec!(1000),
             stop_loss_pct: dec!(0.30),
+            take_profit_activation_pct: dec!(0.20),
+            take_profit_giveback_pct: dec!(0.50),
             cheap_side_min: dec!(0.15),
             cheap_side_max: dec!(0.45),
             time_left_min_minutes: 1.5,

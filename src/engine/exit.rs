@@ -8,6 +8,7 @@ use serde::Serialize;
 #[serde(rename_all = "snake_case")]
 pub enum ExitReason {
     StopLoss,
+    TakeProfit,
     MarketRolled,
     ManualKillSwitch,
 }
@@ -16,6 +17,7 @@ impl ExitReason {
     pub fn as_str(&self) -> &'static str {
         match self {
             ExitReason::StopLoss => "stop_loss",
+            ExitReason::TakeProfit => "take_profit",
             ExitReason::MarketRolled => "market_rolled",
             ExitReason::ManualKillSwitch => "manual_kill_switch",
         }
@@ -44,11 +46,23 @@ pub fn evaluate_exit(
         return ExitDecision::Exit(ExitReason::MarketRolled);
     }
 
-    // Stop-loss: unrealized pnl <= -(contract_size * stop_loss_pct)
     let mark = snapshot
         .bid_for(position.side)
         .unwrap_or(snapshot.price_for(position.side));
     let pnl = position.unrealized_pnl(mark);
+
+    // Trailing take-profit: once MFE crosses the activation threshold, exit on a
+    // giveback of the peak. Checked before stop-loss so a reversal from a winning
+    // peak closes at a small gain instead of riding all the way to stop-out.
+    let activation_abs = position.contract_size * cfg.take_profit_activation_pct;
+    if position.max_unrealized_pnl >= activation_abs {
+        let giveback_threshold = position.max_unrealized_pnl * cfg.take_profit_giveback_pct;
+        if pnl <= giveback_threshold {
+            return ExitDecision::Exit(ExitReason::TakeProfit);
+        }
+    }
+
+    // Stop-loss: unrealized pnl <= -(contract_size * stop_loss_pct)
     let stop_loss_threshold = -(position.contract_size * cfg.stop_loss_pct);
     if pnl <= stop_loss_threshold {
         return ExitDecision::Exit(ExitReason::StopLoss);
@@ -73,6 +87,8 @@ mod tests {
             max_stake_usd: dec!(250),
             starting_balance: dec!(1000),
             stop_loss_pct: dec!(0.30),
+            take_profit_activation_pct: dec!(0.20),
+            take_profit_giveback_pct: dec!(0.50),
             cheap_side_min: dec!(0.15),
             cheap_side_max: dec!(0.45),
             max_entry_spread: dec!(0.04),
@@ -176,6 +192,42 @@ mod tests {
         let state = EngineState::default();
         let d = evaluate_exit(&state, &p, &s, &cfg(), later);
         assert!(matches!(d, ExitDecision::Exit(ExitReason::MarketRolled)));
+    }
+
+    #[test]
+    fn take_profit_fires_after_armed_giveback() {
+        // contract_size = 0.25 * 100 = 25. activation @ 20% → arm once mfe >= 5.
+        // giveback @ 50% → exit when current pnl <= 50% of peak.
+        let mut p = pos("m", Side::Up, dec!(0.25), dec!(100));
+        p.max_unrealized_pnl = dec!(20); // peak +$20 (80% of contract), armed
+        // current mark 0.35 → pnl = (0.35-0.25)*100 = +10 → 50% of peak 20
+        let s = snap("m", 180, dec!(0.35));
+        let state = EngineState::default();
+        let d = evaluate_exit(&state, &p, &s, &cfg(), chrono::Utc::now());
+        assert!(matches!(d, ExitDecision::Exit(ExitReason::TakeProfit)));
+    }
+
+    #[test]
+    fn take_profit_does_not_fire_before_activation() {
+        // peak +$4 (below +5 activation). No exit even if current dropped.
+        let mut p = pos("m", Side::Up, dec!(0.25), dec!(100));
+        p.max_unrealized_pnl = dec!(4);
+        let s = snap("m", 180, dec!(0.26)); // pnl = +1, well under peak, but not armed
+        let state = EngineState::default();
+        let d = evaluate_exit(&state, &p, &s, &cfg(), chrono::Utc::now());
+        assert!(matches!(d, ExitDecision::Hold));
+    }
+
+    #[test]
+    fn take_profit_preempts_stop_loss_when_both_trip() {
+        // Peak was +20 (armed). Now at -8 which is BELOW stop-loss (-7.5).
+        // Take-profit retracement check runs first → TakeProfit.
+        let mut p = pos("m", Side::Up, dec!(0.25), dec!(100));
+        p.max_unrealized_pnl = dec!(20);
+        let s = snap("m", 180, dec!(0.17)); // pnl = -8
+        let state = EngineState::default();
+        let d = evaluate_exit(&state, &p, &s, &cfg(), chrono::Utc::now());
+        assert!(matches!(d, ExitDecision::Exit(ExitReason::TakeProfit)));
     }
 
     #[test]

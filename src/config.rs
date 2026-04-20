@@ -68,6 +68,12 @@ pub struct TradingConfig {
     pub max_stake_usd: Decimal,
     pub starting_balance: Decimal,
     pub stop_loss_pct: Decimal,
+    /// Arm the trailing take-profit once `max_unrealized_pnl` crosses this fraction
+    /// of `contract_size`. Before arming, only stop-loss / settlement can exit.
+    pub take_profit_activation_pct: Decimal,
+    /// Once armed, exit when `unrealized_pnl` falls to (or below) this fraction
+    /// of `max_unrealized_pnl`. 0.50 = give back half of peak profit.
+    pub take_profit_giveback_pct: Decimal,
     pub cheap_side_min: Decimal,
     pub cheap_side_max: Decimal,
     pub max_entry_spread: Decimal,
@@ -153,6 +159,8 @@ impl AppConfig {
             max_stake_usd: env_dec("MAX_STAKE_USD", "250")?,
             starting_balance: env_dec("STARTING_BALANCE", "1000")?,
             stop_loss_pct: env_dec("STOP_LOSS_PCT", "0.30")?,
+            take_profit_activation_pct: env_dec("TAKE_PROFIT_ACTIVATION_PCT", "0.20")?,
+            take_profit_giveback_pct: env_dec("TAKE_PROFIT_GIVEBACK_PCT", "0.50")?,
             cheap_side_min: env_dec("CHEAP_SIDE_MIN", "0.15")?,
             cheap_side_max: env_dec("CHEAP_SIDE_MAX", "0.45")?,
             max_entry_spread: env_dec("MAX_ENTRY_SPREAD", "0.04")?,
