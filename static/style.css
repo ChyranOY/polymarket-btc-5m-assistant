@@ -84,3 +84,22 @@ th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: upp
 .pos-pnl { font-weight: 600; }
 .pos-pnl.pos { color: var(--green); }
 .pos-pnl.neg { color: var(--red); }
+
+.pos { color: var(--green); }
+.neg { color: var(--red); }
+
+.gates { list-style: none; margin: 8px 0 0; padding: 0; }
+.gates .gate {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 0;
+  border-bottom: 1px dotted var(--line);
+}
+.gates .gate:last-child { border-bottom: none; }
+.gates .gate-icon { font-weight: 700; width: 14px; }
+.gates .gate.pass .gate-icon { color: var(--green); }
+.gates .gate.fail .gate-icon { color: var(--red); }
+.gates .gate.fail .gate-name { color: var(--red); font-weight: 600; }
+.gates .gate-name { min-width: 180px; }
+.gates .gate-detail { font-size: 12px; }

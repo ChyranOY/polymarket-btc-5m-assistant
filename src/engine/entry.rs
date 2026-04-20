@@ -85,6 +85,173 @@ pub enum EntryDecision {
     Skip(SkipReason),
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct GateStatus {
+    pub name: &'static str,
+    pub pass: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GateReport {
+    pub all_pass: bool,
+    pub gates: Vec<GateStatus>,
+}
+
+/// Evaluate every entry gate independently (no short-circuit) for diagnostic display
+/// in the UI. Mirrors the rules in `evaluate_entry` but surfaces the full list of
+/// gate pass/fail + human-readable context strings.
+pub fn evaluate_gates(
+    state: &EngineState,
+    snapshot: Option<&MarketSnapshot>,
+    cfg: &TradingConfig,
+    now: DateTime<Utc>,
+) -> GateReport {
+    let mut gates: Vec<GateStatus> = Vec::new();
+    let push = |gs: &mut Vec<GateStatus>, name, pass, detail: Option<String>| {
+        gs.push(GateStatus { name, pass, detail });
+    };
+
+    push(&mut gates, "trading_enabled", state.trading_enabled, None);
+
+    let pos_detail = state
+        .position
+        .as_ref()
+        .map(|p| format!("{} {} @ {}", p.side.as_str(), p.shares, p.entry_price));
+    push(&mut gates, "no_open_position", state.position.is_none(), pos_detail);
+
+    let diff_ok = match (&state.last_traded_slug, snapshot) {
+        (Some(last), Some(sn)) => *last != sn.market_slug,
+        _ => true,
+    };
+    push(
+        &mut gates,
+        "different_market",
+        diff_ok,
+        state.last_traded_slug.clone().map(|s| format!("last: {s}")),
+    );
+
+    let cooldown_remain = state
+        .last_exit_time
+        .map(|t| cfg.cooldown_after_exit_sec as i64 - (now - t).num_seconds())
+        .unwrap_or(0);
+    let cooldown_ok = cooldown_remain <= 0;
+    push(
+        &mut gates,
+        "cooldown_clear",
+        cooldown_ok,
+        (!cooldown_ok).then(|| format!("{cooldown_remain}s remaining")),
+    );
+
+    let uptime = (now - state.boot_time).num_seconds();
+    let warmup_remain = cfg.warmup_ticks as i64 - uptime;
+    let warmup_ok = warmup_remain <= 0;
+    push(
+        &mut gates,
+        "warmup_complete",
+        warmup_ok,
+        (!warmup_ok).then(|| format!("{warmup_remain}s remaining")),
+    );
+
+    let cb_ok = !state.circuit_breaker_tripped(now);
+    push(
+        &mut gates,
+        "circuit_breaker_clear",
+        cb_ok,
+        (!cb_ok).then(|| format!("losses: {}", state.circuit_breaker.consecutive_losses)),
+    );
+
+    let hours_ok = in_trading_hours(
+        now,
+        cfg.trading_hours_start_pst,
+        cfg.trading_hours_end_pst,
+        cfg.allow_weekends,
+    );
+    push(
+        &mut gates,
+        "in_trading_hours",
+        hours_ok,
+        Some(format!(
+            "{}–{} PST{}",
+            cfg.trading_hours_start_pst,
+            cfg.trading_hours_end_pst,
+            if cfg.allow_weekends { "" } else { " weekdays" }
+        )),
+    );
+
+    if let Some(sn) = snapshot {
+        let time_left = sn.time_left_minutes(now);
+        let alive_ok = time_left >= cfg.time_left_min_minutes;
+        push(
+            &mut gates,
+            "market_alive",
+            alive_ok,
+            Some(format!(
+                "{:.1}m left (min {:.1}m)",
+                time_left, cfg.time_left_min_minutes
+            )),
+        );
+
+        let up_ask = sn.up_ask;
+        let dn_ask = sn.down_ask;
+        let prices_ok = up_ask.is_some() || dn_ask.is_some();
+        let fmt_ask = |p: Option<Decimal>| p.map(|d| d.to_string()).unwrap_or_else(|| "—".into());
+        push(
+            &mut gates,
+            "prices_available",
+            prices_ok,
+            Some(format!("up={} down={}", fmt_ask(up_ask), fmt_ask(dn_ask))),
+        );
+
+        let up_in = up_ask
+            .map(|p| p >= cfg.cheap_side_min && p <= cfg.cheap_side_max)
+            .unwrap_or(false);
+        let dn_in = dn_ask
+            .map(|p| p >= cfg.cheap_side_min && p <= cfg.cheap_side_max)
+            .unwrap_or(false);
+        push(
+            &mut gates,
+            "cheap_side_in_range",
+            up_in || dn_in,
+            Some(format!(
+                "bounds [{}, {}]",
+                cfg.cheap_side_min, cfg.cheap_side_max
+            )),
+        );
+
+        // Evaluate spread on the side that `evaluate_entry` would pick.
+        let (side_ask, side_bid) = if up_in && (!dn_in || up_ask <= dn_ask) {
+            (sn.up_ask, sn.up_bid)
+        } else if dn_in {
+            (sn.down_ask, sn.down_bid)
+        } else {
+            (None, None)
+        };
+        let (spread_ok, spread_detail) = match (side_ask, side_bid) {
+            (Some(a), Some(b)) => {
+                let spread = a - b;
+                (
+                    spread <= cfg.max_entry_spread,
+                    Some(format!("{} (max {})", spread, cfg.max_entry_spread)),
+                )
+            }
+            _ => (true, None),
+        };
+        push(&mut gates, "spread_ok", spread_ok, spread_detail);
+    } else {
+        push(
+            &mut gates,
+            "market_alive",
+            false,
+            Some("no market loaded".into()),
+        );
+    }
+
+    let all_pass = gates.iter().all(|g| g.pass);
+    GateReport { all_pass, gates }
+}
+
 /// Pure entry-gate function. The engine calls this every tick; no I/O, no mutation.
 pub fn evaluate_entry(
     state: &EngineState,

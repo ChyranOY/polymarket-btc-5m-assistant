@@ -84,6 +84,7 @@ async function renderStatus() {
     $('mode-select').value = s.mode || 'paper';
   }
 
+  renderGates(s.gates);
   renderPosition(s.position);
 
   // Trade list refresh logic: only when a position just closed (had one → now none).
@@ -94,6 +95,28 @@ async function renderStatus() {
     renderTrades();
   }
   hadPositionLastPoll = hasPositionNow;
+}
+
+function renderGates(report) {
+  const list = $('gates-list');
+  const summary = $('gates-summary');
+  if (!report || !Array.isArray(report.gates)) {
+    list.innerHTML = '';
+    summary.textContent = '—';
+    return;
+  }
+  const failed = report.gates.filter(g => !g.pass).map(g => g.name);
+  summary.textContent = report.all_pass
+    ? 'ALL PASS'
+    : `BLOCKED: ${failed.join(', ')}`;
+  summary.className = report.all_pass ? 'pos' : 'neg';
+  list.innerHTML = report.gates.map(g => `
+    <li class="gate ${g.pass ? 'pass' : 'fail'}">
+      <span class="gate-icon">${g.pass ? '✓' : '✗'}</span>
+      <span class="gate-name">${g.name}</span>
+      ${g.detail ? `<span class="gate-detail muted">${g.detail}</span>` : ''}
+    </li>
+  `).join('');
 }
 
 function renderPosition(p) {
