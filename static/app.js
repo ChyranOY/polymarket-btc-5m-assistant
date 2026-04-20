@@ -110,8 +110,8 @@ async function renderStatus() {
 function renderGates(report) {
   const list = $('gates-list');
   const summary = $('gates-summary');
-  if (!report || !Array.isArray(report.gates)) {
-    list.innerHTML = '';
+  if (!report || !Array.isArray(report.gates) || report.gates.length === 0) {
+    list.innerHTML = `<li class="gates-empty">[ WAITING FOR SERVER ]</li>`;
     summary.textContent = '—';
     summary.className = 'meta';
     return;
