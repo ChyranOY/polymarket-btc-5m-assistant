@@ -1,4 +1,4 @@
-use crate::model::{OpenPosition, Trade};
+use crate::model::{MarketSnapshot, OpenPosition, Trade};
 use chrono::{DateTime, NaiveDate, Utc};
 use chrono_tz::America::Los_Angeles;
 use rust_decimal::Decimal;
@@ -83,6 +83,11 @@ pub struct EngineState {
     /// so the WS book and market scheduler can stabilize.
     pub boot_time: DateTime<Utc>,
     pub recent_trades: Vec<Trade>, // small in-memory cache for the UI
+    /// Latest market snapshot the tick loop actually used for entry/exit
+    /// evaluation. Includes the REST fallback, so the /status gate report can
+    /// show the same prices the engine sees rather than a WS-only peek that
+    /// looks empty for a few seconds after a rollover.
+    pub last_snapshot: Option<MarketSnapshot>,
 }
 
 impl Default for EngineState {
@@ -103,6 +108,7 @@ impl Default for EngineState {
             last_exit_time: None,
             boot_time: Utc::now(),
             recent_trades: Vec::new(),
+            last_snapshot: None,
         }
     }
 }

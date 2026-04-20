@@ -60,48 +60,31 @@ async fn status(State(s): State<AppState>) -> Json<Value> {
     let mode = h.current_mode().await;
     let balance = h.executor.read().await.balance().await.ok();
 
-    // WS book diagnostics + lightweight MarketSnapshot (WS cache only; no REST calls
-    // from the status path). The snapshot feeds the entry-gate diagnostic below.
-    let (ws_diag, snapshot) = if let (Some(ws), Some(m)) = (h.clob_ws.as_ref(), market.as_ref()) {
+    // WS book diagnostics only — the /status endpoint never makes its own REST
+    // calls. For gate evaluation we use the tick loop's last snapshot (which
+    // does use REST fallback) so the UI matches what the engine actually sees.
+    let ws_diag = if let (Some(ws), Some(m)) = (h.clob_ws.as_ref(), market.as_ref()) {
         let up = ws.peek(&m.up_token_id).await;
         let dn = ws.peek(&m.down_token_id).await;
         let fresh = |s: &Option<crate::data::clob_ws::BookSnapshot>| {
             s.as_ref()
                 .map(|b| (now - b.updated_at).num_milliseconds())
         };
-        let diag = json!({
+        json!({
             "up_best_bid": up.as_ref().and_then(|b| b.best_bid),
             "up_best_ask": up.as_ref().and_then(|b| b.best_ask),
             "up_ms_ago": fresh(&up),
             "down_best_bid": dn.as_ref().and_then(|b| b.best_bid),
             "down_best_ask": dn.as_ref().and_then(|b| b.best_ask),
             "down_ms_ago": fresh(&dn),
-        });
-        let up_ask = up.as_ref().and_then(|b| b.best_ask);
-        let up_bid = up.as_ref().and_then(|b| b.best_bid);
-        let dn_ask = dn.as_ref().and_then(|b| b.best_ask);
-        let dn_bid = dn.as_ref().and_then(|b| b.best_bid);
-        let snap = crate::model::MarketSnapshot {
-            market_slug: m.slug.clone(),
-            up_token_id: m.up_token_id.clone(),
-            down_token_id: m.down_token_id.clone(),
-            end_date: m.end_date,
-            up_price: up_ask.unwrap_or(rust_decimal_macros::dec!(0.5)),
-            down_price: dn_ask.unwrap_or(rust_decimal_macros::dec!(0.5)),
-            up_ask,
-            down_ask: dn_ask,
-            up_bid,
-            down_bid: dn_bid,
-            fetched_at: now,
-        };
-        (diag, Some(snap))
+        })
     } else {
-        (Value::Null, None)
+        Value::Null
     };
 
     let gates = crate::engine::entry::evaluate_gates(
         &engine_state,
-        snapshot.as_ref(),
+        engine_state.last_snapshot.as_ref(),
         &h.cfg.trading,
         now,
     );

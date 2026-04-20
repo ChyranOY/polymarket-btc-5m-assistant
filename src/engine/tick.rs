@@ -119,6 +119,7 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
     {
         let mut state = h.state.lock().await;
         state.last_tick = Some(now);
+        state.last_snapshot = Some(snapshot.clone());
         state.maybe_roll_daily_pnl(now);
         if let Some(pos) = state.position.as_mut() {
             if snapshot.market_slug == pos.market_slug {
