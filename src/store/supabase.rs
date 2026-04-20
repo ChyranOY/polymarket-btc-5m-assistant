@@ -256,6 +256,45 @@ impl SupabaseClient {
         Ok(total)
     }
 
+    /// Fetch every Rust-origin rollover trade (won + lost) for a mode. Used by the
+    /// one-shot backfill binary — values stay as raw JSON so the caller can read
+    /// every column (side, entryPrice, shares, current exitPrice/pnl/exitReason).
+    pub async fn fetch_rollover_trades(
+        &self,
+        mode: Mode,
+        slug_prefix: &str,
+    ) -> Result<Vec<Value>> {
+        let Some(url) = self.rest("trades") else { return Ok(Vec::new()) };
+        let resp = self
+            .http
+            .get(&url)
+            .query(&[
+                ("status", "eq.CLOSED".to_string()),
+                ("mode", format!("eq.{}", mode.as_str())),
+                ("marketSlug", format!("like.{slug_prefix}*")),
+                ("entryGateSnapshot", RUST_ORIGIN_FILTER.to_string()),
+                (
+                    "exitReason",
+                    "in.(market_rolled_won,market_rolled_lost)".to_string(),
+                ),
+                ("order", "exitTime.desc".to_string()),
+            ])
+            .send()
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(BotError::Supabase { status: status.as_u16(), body });
+        }
+        let v: Value = resp.json().await?;
+        match v {
+            Value::Array(a) => Ok(a),
+            other => Err(BotError::parse(format!(
+                "supabase rollover trades: expected array, got {other:?}"
+            ))),
+        }
+    }
+
     /// Batched signal_ticks insert. Accepts any JSON array; schema is loose.
     pub async fn insert_signal_ticks(&self, rows: &[Value]) -> Result<()> {
         if rows.is_empty() {

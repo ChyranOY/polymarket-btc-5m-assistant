@@ -171,9 +171,9 @@ async function renderTrades() {
           <td>${fmtTimestamp(r.entryTime || r.entry_time)}</td>
           <td>${(r.mode || '—').toUpperCase()}</td>
           <td>${r.side || '—'}</td>
-          <td>${r.entryPrice ? Number(r.entryPrice).toFixed(4) : '—'}</td>
-          <td>${r.exitPrice ? Number(r.exitPrice).toFixed(4) : '—'}</td>
-          <td>${r.shares ? Number(r.shares).toFixed(2) : '—'}</td>
+          <td>${r.entryPrice != null ? Number(r.entryPrice).toFixed(4) : '—'}</td>
+          <td>${r.exitPrice != null ? Number(r.exitPrice).toFixed(4) : '—'}</td>
+          <td>${r.shares != null ? Number(r.shares).toFixed(2) : '—'}</td>
           <td class="pos-pnl ${pnlCls}">${fmtUsd(pnl)}</td>
           <td class="muted">${reason}</td>
         </tr>

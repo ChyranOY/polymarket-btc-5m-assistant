@@ -67,6 +67,12 @@ pub struct EngineState {
     /// Current unrealized PnL, updated every tick by the engine. `/status` reads this
     /// instead of doing its own WS book lookup (avoids key-mismatch / timing races).
     pub unrealized_pnl: Option<Decimal>,
+    /// Last bid observed on the held position's OWN market (not a successor).
+    /// Used as the settlement-decision input for `MarketRolled` exits, because
+    /// by the time rollover is detected the tick snapshot already references
+    /// the new market and its opening ~0.50 quotes would flip the won/lost
+    /// decision. Updated only on ticks where snapshot.slug == position.slug.
+    pub last_position_mark: Option<Decimal>,
     /// Slug of the most recently closed trade. Entry gate blocks re-entry into the same
     /// 5m market — one trade per market cycle.
     pub last_traded_slug: Option<String>,
@@ -92,6 +98,7 @@ impl Default for EngineState {
             last_tick: None,
             last_skip: None,
             unrealized_pnl: None,
+            last_position_mark: None,
             last_traded_slug: None,
             last_exit_time: None,
             boot_time: Utc::now(),
@@ -130,6 +137,7 @@ impl EngineState {
             }
         }
         self.position = None;
+        self.last_position_mark = None;
         self.last_traded_slug = Some(trade.market_slug.clone());
         self.last_exit_time = Some(now);
         self.recent_trades.push(trade);
@@ -172,6 +180,15 @@ mod tests {
             created_at: exit_time,
             updated_at: exit_time,
         }
+    }
+
+    #[test]
+    fn record_trade_closed_clears_last_position_mark() {
+        let mut s = EngineState::default();
+        s.last_position_mark = Some(dec!(0.80));
+        let now = Utc.with_ymd_and_hms(2026, 4, 16, 16, 0, 0).unwrap();
+        s.record_trade_closed(closed_trade(dec!(5), now), now);
+        assert_eq!(s.last_position_mark, None);
     }
 
     #[test]

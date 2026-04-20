@@ -113,16 +113,24 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
 
     // Update MFE/MAE on an open position regardless of exit decision, and roll the
     // daily PnL counter if we've crossed a PST day boundary since the last tick.
+    // Only trust the snapshot's mark when it still references the position's own
+    // market — once rollover has happened the snapshot is the successor market and
+    // its ~0.50 opening bid must not be treated as our position's value.
     {
         let mut state = h.state.lock().await;
         state.last_tick = Some(now);
         state.maybe_roll_daily_pnl(now);
         if let Some(pos) = state.position.as_mut() {
-            let mark = snapshot
-                .bid_for(pos.side)
-                .unwrap_or(snapshot.price_for(pos.side));
-            pos.update_mfe_mae(mark);
-            state.unrealized_pnl = Some(pos.unrealized_pnl(mark));
+            if snapshot.market_slug == pos.market_slug {
+                let mark = snapshot
+                    .bid_for(pos.side)
+                    .unwrap_or(snapshot.price_for(pos.side));
+                pos.update_mfe_mae(mark);
+                state.unrealized_pnl = Some(pos.unrealized_pnl(mark));
+                state.last_position_mark = Some(mark);
+            }
+            // Snapshot has rolled past us — keep the last valid unrealized/mark
+            // so the UI shows the final pre-rollover value until the exit fires.
         } else {
             state.unrealized_pnl = None;
         }
@@ -146,10 +154,20 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
         drop(state_snapshot);
 
         if let ExitDecision::Exit(reason) = decision {
-            let mark = snapshot
-                .bid_for(position.side)
-                .unwrap_or(snapshot.price_for(position.side));
             let executor = h.executor.read().await.clone();
+
+            // For rollover, mark is the last bid we saw while the snapshot still
+            // matched our market (captured in state.last_position_mark). For every
+            // other exit reason, the snapshot still references our market so its
+            // current bid is correct.
+            let mark = if matches!(reason, ExitReason::MarketRolled) {
+                let cached = h.state.lock().await.last_position_mark;
+                cached.unwrap_or(position.entry_price)
+            } else {
+                snapshot
+                    .bid_for(position.side)
+                    .unwrap_or(snapshot.price_for(position.side))
+            };
 
             // MarketRolled means the old market has settled — you can't sell on a
             // closed market. Instead, redeem the tokens at their settlement payout:
