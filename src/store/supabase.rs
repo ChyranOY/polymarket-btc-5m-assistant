@@ -219,38 +219,20 @@ impl SupabaseClient {
         slug_prefix: &str,
         since: DateTime<Utc>,
     ) -> Result<Decimal> {
-        self.sum_realized_pnl_inner(mode, slug_prefix, Some(since)).await
-    }
-
-    /// Sum of realized pnl for every closed Rust-origin trade in this mode.
-    /// Hydrates the in-memory `all_time_realized_pnl` counter on boot so the
-    /// dashboard shows a true running total instead of a sum-of-last-100.
-    pub async fn sum_all_realized_pnl(
-        &self,
-        mode: Mode,
-        slug_prefix: &str,
-    ) -> Result<Decimal> {
-        self.sum_realized_pnl_inner(mode, slug_prefix, None).await
-    }
-
-    async fn sum_realized_pnl_inner(
-        &self,
-        mode: Mode,
-        slug_prefix: &str,
-        since: Option<DateTime<Utc>>,
-    ) -> Result<Decimal> {
         let Some(url) = self.rest("trades") else { return Ok(Decimal::ZERO) };
-        let mut query: Vec<(&str, String)> = vec![
-            ("status", "eq.CLOSED".to_string()),
-            ("mode", format!("eq.{}", mode.as_str())),
-            ("marketSlug", format!("like.{slug_prefix}*")),
-            ("entryGateSnapshot", RUST_ORIGIN_FILTER.to_string()),
-            ("select", "pnl".to_string()),
-        ];
-        if let Some(since) = since {
-            query.push(("exitTime", format!("gte.{}", since.to_rfc3339())));
-        }
-        let resp = self.http.get(&url).query(&query).send().await?;
+        let resp = self
+            .http
+            .get(&url)
+            .query(&[
+                ("status", "eq.CLOSED".to_string()),
+                ("mode", format!("eq.{}", mode.as_str())),
+                ("marketSlug", format!("like.{slug_prefix}*")),
+                ("entryGateSnapshot", RUST_ORIGIN_FILTER.to_string()),
+                ("exitTime", format!("gte.{}", since.to_rfc3339())),
+                ("select", "pnl".to_string()),
+            ])
+            .send()
+            .await?;
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();

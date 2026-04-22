@@ -162,7 +162,15 @@ async fn status(State(s): State<AppState>) -> Json<Value> {
         "wins": wins,
         "win_rate": win_rate,
         "total_pnl": total_pnl,
-        "realized_pnl": engine_state.all_time_realized_pnl,
+        // Session-scoped realized PnL = current equity − starting balance. Matches
+        // what the paper executor's balance would tell you (balance moved −$98
+        // from $1000 → show −$98). Using the paper ledger's numbers ensures it
+        // always reconciles with the Balance tile on the dashboard; a Supabase
+        // sum would mix in prior sessions since the paper ledger resets on
+        // every DO redeploy.
+        "realized_pnl": balance.as_ref().map(|b| {
+            b.available_usd + b.locked_usd - h.cfg.trading.starting_balance
+        }),
     }))
 }
 

@@ -146,16 +146,6 @@ async fn boot_reconcile(
         Err(e) => tracing::warn!(err = %e, "reconcile: daily pnl hydrate failed"),
     }
 
-    // 1b) Hydrate the cumulative realized pnl counter so the /status "Realized
-    // PnL" reflects every closed trade, not just the last 100 in the cache.
-    match supabase.sum_all_realized_pnl(mode, slug_prefix).await {
-        Ok(sum) => {
-            state.all_time_realized_pnl = sum;
-            tracing::info!(all_time_realized_pnl = %sum, "reconcile: all-time realized pnl hydrated");
-        }
-        Err(e) => tracing::warn!(err = %e, "reconcile: all-time pnl hydrate failed"),
-    }
-
     // 2) Handle any OPEN trade left behind by a prior crash / SIGKILL. For paper mode
     // we treat it as abandoned — the in-memory position didn't survive the restart,
     // so patch the row as CLOSED with a sentinel reason and move on. Live mode (not

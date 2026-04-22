@@ -58,12 +58,6 @@ pub struct EngineState {
     pub kill_switch: bool,
     pub balance: Decimal,
     pub daily_pnl: Decimal,
-    /// Cumulative realized PnL across every closed Rust-origin trade for this
-    /// mode. Hydrated from Supabase on boot (`sum_all_realized_pnl`) and
-    /// incremented on every in-session close. Unlike summing
-    /// `recent_trades` this does not drift as the 100-trade cache evicts older
-    /// rows, so the UI can show a true running total.
-    pub all_time_realized_pnl: Decimal,
     /// The PST date that `daily_pnl` is scoped to. When it changes, the counter resets.
     pub daily_pnl_date: Option<NaiveDate>,
     pub position: Option<OpenPosition>,
@@ -103,7 +97,6 @@ impl Default for EngineState {
             kill_switch: false,
             balance: dec!(0),
             daily_pnl: dec!(0),
-            all_time_realized_pnl: dec!(0),
             daily_pnl_date: None,
             position: None,
             circuit_breaker: CircuitBreaker::default(),
@@ -142,7 +135,6 @@ impl EngineState {
         self.maybe_roll_daily_pnl(now);
         if let Some(p) = trade.pnl {
             self.daily_pnl += p;
-            self.all_time_realized_pnl += p;
             self.balance += p;
             if p < dec!(0) {
                 self.circuit_breaker.record_loss(now);
