@@ -127,6 +127,9 @@ async fn status(State(s): State<AppState>) -> Json<Value> {
     } else {
         None
     };
+    // Running total for the last 100 closed trades held in memory — drives the
+    // small stats card only. The dashboard's hero "Realized PnL" uses
+    // `all_time_realized_pnl` instead so it never drifts as the cache rolls.
     let total_pnl: rust_decimal::Decimal = closed_trades
         .iter()
         .filter_map(|t| t.pnl)
@@ -159,6 +162,7 @@ async fn status(State(s): State<AppState>) -> Json<Value> {
         "wins": wins,
         "win_rate": win_rate,
         "total_pnl": total_pnl,
+        "realized_pnl": engine_state.all_time_realized_pnl,
     }))
 }
 

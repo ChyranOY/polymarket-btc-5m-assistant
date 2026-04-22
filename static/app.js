@@ -80,7 +80,7 @@ async function renderStatus() {
   $('time-left').textContent = fmtTimeLeft(s.market?.time_left_sec);
   $('balance').textContent = fmtUsd(s.balance?.available_usd);
   setSignedValue($('daily-pnl'), s.daily_pnl, 'hero');
-  setSignedValue($('total-pnl'), s.total_pnl, 'inline');
+  setSignedValue($('realized-pnl'), s.realized_pnl, 'inline');
   $('last-tick').textContent = fmtTimeAgo(s.last_tick_ms_ago);
   $('last-skip').textContent = s.last_skip ? `[ ${s.last_skip.toUpperCase()} ]` : (s.trading_enabled ? '[ ELIGIBLE ]' : '—');
   const cbCooling = !!s.circuit_breaker?.cooldown_until;
