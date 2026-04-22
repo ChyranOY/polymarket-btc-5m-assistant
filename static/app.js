@@ -290,6 +290,29 @@ function wire() {
   input.addEventListener('change', () => setToken(input.value.trim()));
   const refresh = document.getElementById('btn-refresh-trades');
   if (refresh) refresh.addEventListener('click', renderTrades);
+  wireTabs();
+}
+
+function wireTabs() {
+  const buttons = document.querySelectorAll('.tab-button');
+  const panels = document.querySelectorAll('.tab-panel');
+  const refreshBtn = document.getElementById('btn-refresh-trades');
+  const kronosMeta = document.getElementById('kronos-meta');
+  buttons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.tab;
+      buttons.forEach((b) => {
+        const active = b.dataset.tab === tab;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      panels.forEach((p) => {
+        p.hidden = p.dataset.tabPanel !== tab;
+      });
+      if (refreshBtn) refreshBtn.style.display = tab === 'trades' ? '' : 'none';
+      if (kronosMeta) kronosMeta.style.display = tab === 'kronos' ? '' : 'none';
+    });
+  });
 }
 
 async function statusTick() {

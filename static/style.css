@@ -365,6 +365,47 @@ tr:last-child td { border-bottom: none; }
 .bracket.neg { color: var(--accent); }
 .bracket.warn { color: var(--warning); }
 
+/* ─── tabs ──────────────────────────────────────────────── */
+
+.tabs {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+  border-bottom: 1px solid var(--border);
+}
+.tab-buttons {
+  display: flex;
+  gap: var(--space-xs);
+}
+.tab-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding-bottom: var(--space-sm);
+}
+.tab-button {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 10px 4px;
+  margin-bottom: -1px;
+  min-height: 0;
+  color: var(--text-secondary);
+  letter-spacing: 0.08em;
+}
+.tab-button:hover {
+  color: var(--text-display);
+  border-color: var(--border-visible);
+}
+.tab-button.active {
+  color: var(--text-display);
+  border-color: var(--text-display);
+}
+.tab-panel[hidden] { display: none; }
+
 /* ─── responsive tweaks ─────────────────────────────────── */
 
 @media (max-width: 720px) {
