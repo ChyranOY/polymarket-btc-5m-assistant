@@ -139,36 +139,38 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
         }
     }
 
-    // Capture a signal_ticks row for post-mortem analysis (no-op if Supabase
-    // is disabled). Spawned flush task owns all I/O; this is a ~µs send.
+    // Capture a signal_ticks row only while a position is open. The primary
+    // consumer is the SL/TP replay simulator, which needs tick-by-tick mark
+    // paths between entry and exit to reconstruct trailing-TP exits — flat-
+    // state ticks aren't used by any downstream analysis today.
     //
     // Top-level columns match the legacy `signal_ticks` schema (shared with
     // the Node dashboard writer). Rich detail — ask/bid per side, open-
     // position state — lives in the `meta` JSONB column added by the
     // 2026-04-22 migration `add_meta_jsonb_to_signal_ticks`.
-    if let Some(recorder) = h.tick_recorder.as_ref() {
+    let position_snapshot = {
+        let state = h.state.lock().await;
+        state.position.as_ref().map(|pos| {
+            (
+                pos.side,
+                json!({
+                    "side": pos.side,
+                    "entryPrice": pos.entry_price,
+                    "shares": pos.shares,
+                    "contractSize": pos.contract_size,
+                    "mark": state.last_position_mark,
+                    "unrealizedPnl": state.unrealized_pnl,
+                    "maxUnrealizedPnl": pos.max_unrealized_pnl,
+                    "minUnrealizedPnl": pos.min_unrealized_pnl,
+                    "marketSlug": pos.market_slug,
+                }),
+            )
+        })
+    };
+    if let (Some(recorder), Some((rec_side, position_meta))) =
+        (h.tick_recorder.as_ref(), position_snapshot)
+    {
         let mode = h.current_mode().await;
-        let (position_meta, rec_side, rec_phase) = {
-            let state = h.state.lock().await;
-            match state.position.as_ref() {
-                Some(pos) => {
-                    let side = pos.side;
-                    let meta = json!({
-                        "side": pos.side,
-                        "entryPrice": pos.entry_price,
-                        "shares": pos.shares,
-                        "contractSize": pos.contract_size,
-                        "mark": state.last_position_mark,
-                        "unrealizedPnl": state.unrealized_pnl,
-                        "maxUnrealizedPnl": pos.max_unrealized_pnl,
-                        "minUnrealizedPnl": pos.min_unrealized_pnl,
-                        "marketSlug": pos.market_slug,
-                    });
-                    (Some(meta), Some(side), "holding")
-                }
-                None => (None, None, "flat"),
-            }
-        };
         let spread_up = match (snapshot.up_ask, snapshot.up_bid) {
             (Some(a), Some(b)) => Some(a - b),
             _ => None,
@@ -197,7 +199,7 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
             "spread_up": spread_up,
             "spread_down": spread_down,
             "rec_side": rec_side,
-            "rec_phase": rec_phase,
+            "rec_phase": "holding",
             "meta": meta,
         }));
     }
