@@ -30,6 +30,7 @@ async fn main() -> Result<()> {
     let clob = Arc::new(data::clob_rest::ClobRest::new(&cfg.polymarket)?);
     let clob_ws = data::clob_ws::ClobWs::start(cfg.polymarket.ws_market_url.clone());
     let supabase = Arc::new(store::supabase::SupabaseClient::new(&cfg.supabase)?);
+    let tick_recorder = store::tick_recorder::TickRecorder::start(supabase.clone());
 
     let paper = exec::paper::PaperExecutor::new(
         cfg.trading.starting_balance,
@@ -83,6 +84,7 @@ async fn main() -> Result<()> {
         clob: clob.clone(),
         clob_ws: Some(clob_ws.clone()),
         supabase: supabase.clone(),
+        tick_recorder: tick_recorder.clone(),
         cfg: cfg.clone(),
     });
 

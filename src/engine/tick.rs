@@ -10,6 +10,7 @@ use crate::exec::{CloseRequest, Executor, OpenRequest};
 use crate::market::scheduler::{MarketMeta, MarketTracker};
 use crate::model::{MarketSnapshot, Mode, Trade, TradeStatus};
 use crate::store::supabase::SupabaseClient;
+use crate::store::tick_recorder::TickRecorder;
 use chrono::Utc;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
@@ -27,6 +28,7 @@ pub struct EngineHandle {
     pub clob: Arc<ClobRest>,
     pub clob_ws: Option<ClobWs>,
     pub supabase: Arc<SupabaseClient>,
+    pub tick_recorder: Option<Arc<TickRecorder>>,
     pub cfg: Arc<AppConfig>,
 }
 
@@ -135,6 +137,69 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
         } else {
             state.unrealized_pnl = None;
         }
+    }
+
+    // Capture a signal_ticks row for post-mortem analysis (no-op if Supabase
+    // is disabled). Spawned flush task owns all I/O; this is a ~µs send.
+    //
+    // Top-level columns match the legacy `signal_ticks` schema (shared with
+    // the Node dashboard writer). Rich detail — ask/bid per side, open-
+    // position state — lives in the `meta` JSONB column added by the
+    // 2026-04-22 migration `add_meta_jsonb_to_signal_ticks`.
+    if let Some(recorder) = h.tick_recorder.as_ref() {
+        let mode = h.current_mode().await;
+        let (position_meta, rec_side, rec_phase) = {
+            let state = h.state.lock().await;
+            match state.position.as_ref() {
+                Some(pos) => {
+                    let side = pos.side;
+                    let meta = json!({
+                        "side": pos.side,
+                        "entryPrice": pos.entry_price,
+                        "shares": pos.shares,
+                        "contractSize": pos.contract_size,
+                        "mark": state.last_position_mark,
+                        "unrealizedPnl": state.unrealized_pnl,
+                        "maxUnrealizedPnl": pos.max_unrealized_pnl,
+                        "minUnrealizedPnl": pos.min_unrealized_pnl,
+                        "marketSlug": pos.market_slug,
+                    });
+                    (Some(meta), Some(side), "holding")
+                }
+                None => (None, None, "flat"),
+            }
+        };
+        let spread_up = match (snapshot.up_ask, snapshot.up_bid) {
+            (Some(a), Some(b)) => Some(a - b),
+            _ => None,
+        };
+        let spread_down = match (snapshot.down_ask, snapshot.down_bid) {
+            (Some(a), Some(b)) => Some(a - b),
+            _ => None,
+        };
+        let meta = json!({
+            "mode": mode.as_str(),
+            "upTokenId": snapshot.up_token_id,
+            "downTokenId": snapshot.down_token_id,
+            "endDate": snapshot.end_date,
+            "upAsk": snapshot.up_ask,
+            "upBid": snapshot.up_bid,
+            "downAsk": snapshot.down_ask,
+            "downBid": snapshot.down_bid,
+            "position": position_meta,
+        });
+        recorder.record(json!({
+            "timeframe": "5m",
+            "market_slug": snapshot.market_slug,
+            "time_left_min": snapshot.time_left_minutes(now),
+            "poly_up": snapshot.up_price,
+            "poly_down": snapshot.down_price,
+            "spread_up": spread_up,
+            "spread_down": spread_down,
+            "rec_side": rec_side,
+            "rec_phase": rec_phase,
+            "meta": meta,
+        }));
     }
 
     // If we hold a position, check exits first.
