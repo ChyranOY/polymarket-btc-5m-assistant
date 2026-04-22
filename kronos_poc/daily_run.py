@@ -22,9 +22,12 @@ if not KRONOS_PATH:
 sys.path.insert(0, KRONOS_PATH)
 from model import Kronos, KronosTokenizer, KronosPredictor  # noqa: E402
 
-LOOKBACK_MIN = 400
+# Coinbase caps candles at 300 per request; 300 min = 5h is plenty of context
+# for a 5-minute horizon. Binance has richer data but blocks US-based
+# GitHub runners with HTTP 451.
+LOOKBACK_MIN = 300
 HORIZON_MIN = 5
-BINANCE_KLINES = "https://api.binance.com/api/v3/klines"
+COINBASE_CANDLES = "https://api.exchange.coinbase.com/products/BTC-USD/candles"
 
 
 def pst_midnight_utc(days_ago: int = 1) -> datetime:
@@ -61,24 +64,27 @@ def fetch_trades(since: datetime, until: datetime) -> list[dict]:
 
 
 def fetch_klines(end_ms: int) -> pd.DataFrame:
-    r = requests.get(BINANCE_KLINES, params={
-        "symbol": "BTCUSDT", "interval": "1m",
-        "startTime": end_ms - LOOKBACK_MIN * 60_000,
-        "endTime": end_ms - 1,
-        "limit": LOOKBACK_MIN,
+    """Last LOOKBACK_MIN 1m candles ending at (but not including) end_ms.
+    Coinbase returns rows as [time_s, low, high, open, close, volume],
+    newest-first, granularity in seconds."""
+    end_s = end_ms // 1000
+    start_s = end_s - LOOKBACK_MIN * 60
+    r = requests.get(COINBASE_CANDLES, params={
+        "granularity": 60,
+        "start": datetime.fromtimestamp(start_s, tz=timezone.utc).isoformat(),
+        "end": datetime.fromtimestamp(end_s - 1, tz=timezone.utc).isoformat(),
     }, timeout=15)
     r.raise_for_status()
     raw = r.json()
-    if len(raw) < LOOKBACK_MIN - 5:
+    if not isinstance(raw, list) or len(raw) < LOOKBACK_MIN - 10:
         return pd.DataFrame()
-    df = pd.DataFrame(raw, columns=[
-        "open_time", "open", "high", "low", "close", "volume",
-        "close_time", "quote_volume", "trades", "tb_b", "tb_q", "_",
-    ])
-    for c in ("open", "high", "low", "close", "volume", "quote_volume"):
+    df = pd.DataFrame(raw, columns=["time_s", "low", "high", "open", "close", "volume"])
+    df = df.sort_values("time_s").reset_index(drop=True)
+    for c in ("open", "high", "low", "close", "volume"):
         df[c] = df[c].astype(float)
-    df["amount"] = df["quote_volume"]
-    df["timestamps"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
+    # Kronos wants `amount` (USD turnover). Approximate: close * volume.
+    df["amount"] = df["close"] * df["volume"]
+    df["timestamps"] = pd.to_datetime(df["time_s"], unit="s", utc=True)
     return df[["timestamps", "open", "high", "low", "close", "volume", "amount"]]
 
 
@@ -189,7 +195,15 @@ def main() -> None:
             print(f"skip {t.get('id')}: {e}")
 
     if not scored:
-        print("no scored trades — aborting")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps({
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "window": {"from": since.isoformat(), "to": until.isoformat()},
+            "model": args.model, "samples": args.samples,
+            "metrics": None, "trades": [],
+            "note": f"fetched {len(trades)} trades but none could be scored (candle fetch failed or filtered)",
+        }, indent=2))
+        print(f"wrote {out_path} (no scored trades)")
         return
 
     sdf = pd.DataFrame(scored)
