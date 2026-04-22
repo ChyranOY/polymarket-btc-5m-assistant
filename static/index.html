@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Doto:wght@400;500;700&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./style.css?v=3" />
+    <link rel="stylesheet" href="./style.css?v=4" />
   </head>
   <body>
     <header>
@@ -130,6 +130,60 @@
         </table>
       </section>
 
+      <!-- Kronos (daily) — read-only learning panel, updated by a GitHub
+           Actions cron before the PST trading window opens. -->
+      <section class="card">
+        <div class="section-title">
+          <div class="label">Kronos · Yesterday</div>
+          <span id="kronos-meta" class="meta">—</span>
+        </div>
+        <div id="kronos-empty" class="muted center" style="padding: var(--space-md) 0">
+          [ AWAITING FIRST RUN ]
+        </div>
+        <div id="kronos-body" style="display: none">
+          <div class="grid">
+            <div>
+              <div class="label">Trades scored</div>
+              <div id="kronos-n" class="value">—</div>
+            </div>
+            <div>
+              <div class="label">Agreement</div>
+              <div id="kronos-agree" class="value">—</div>
+            </div>
+            <div>
+              <div class="label">Market log-loss</div>
+              <div id="kronos-ll-market" class="value">—</div>
+            </div>
+            <div>
+              <div class="label">Kronos log-loss</div>
+              <div id="kronos-ll-kronos" class="value">—</div>
+            </div>
+            <div>
+              <div class="label">Counterfactual / $1</div>
+              <div id="kronos-cf" class="value">—</div>
+            </div>
+            <div>
+              <div class="label">Actual PnL</div>
+              <div id="kronos-actual" class="value">—</div>
+            </div>
+          </div>
+          <table style="margin-top: var(--space-lg)">
+            <thead>
+              <tr>
+                <th>Entry</th>
+                <th>Bot side</th>
+                <th>Market P(up)</th>
+                <th>Kronos P(up)</th>
+                <th>Outcome</th>
+                <th>Agree</th>
+                <th>PnL</th>
+              </tr>
+            </thead>
+            <tbody id="kronos-trades-body"></tbody>
+          </table>
+        </div>
+      </section>
+
       <!-- Recent trades -->
       <section class="card">
         <div class="section-title">
@@ -156,6 +210,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=3"></script>
+    <script src="./app.js?v=4"></script>
   </body>
 </html>

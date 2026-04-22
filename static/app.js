@@ -184,6 +184,75 @@ async function renderTrades() {
   }
 }
 
+// Published by the GitHub Actions cron to an orphan `data` branch so daily
+// updates don't trigger a DO redeploy. raw.githubusercontent.com serves with
+// permissive CORS, so we can fetch directly from the dashboard.
+const KRONOS_URL = 'https://raw.githubusercontent.com/ElijahPrince73/polymarket-btc-5m-assistant/data/kronos_daily.json';
+
+async function renderKronos() {
+  let data;
+  try {
+    const res = await fetch(KRONOS_URL, { cache: 'no-store' });
+    if (!res.ok) throw new Error(res.status);
+    data = await res.json();
+  } catch {
+    // Not generated yet — keep the empty-state placeholder visible.
+    return;
+  }
+
+  const meta = $('kronos-meta');
+  const genAt = data.generated_at ? new Date(data.generated_at) : null;
+  meta.textContent = genAt
+    ? `[ ${genAt.toISOString().slice(0, 10)} · ${data.model || ''} ]`.toUpperCase()
+    : '—';
+
+  if (!data.metrics || !Array.isArray(data.trades) || data.trades.length === 0) {
+    $('kronos-empty').style.display = '';
+    $('kronos-body').style.display = 'none';
+    $('kronos-empty').textContent = data.note
+      ? `[ ${String(data.note).toUpperCase()} ]`
+      : '[ NO TRADES IN WINDOW ]';
+    return;
+  }
+
+  $('kronos-empty').style.display = 'none';
+  $('kronos-body').style.display = '';
+
+  const m = data.metrics;
+  $('kronos-n').textContent = m.n;
+  $('kronos-agree').textContent = `${(m.agreement_rate * 100).toFixed(0)}%`;
+  $('kronos-ll-market').textContent = m.market_log_loss.toFixed(4);
+  $('kronos-ll-kronos').textContent = m.kronos_log_loss.toFixed(4);
+  // Highlight the lower (better) log-loss.
+  $('kronos-ll-market').className = 'value';
+  $('kronos-ll-kronos').className = 'value';
+  if (m.kronos_log_loss < m.market_log_loss) $('kronos-ll-kronos').classList.add('pos');
+  else $('kronos-ll-market').classList.add('pos');
+
+  const cf = m.counterfactual_total_per_dollar;
+  $('kronos-cf').textContent = `${cf >= 0 ? '+' : ''}${cf.toFixed(2)}`;
+  $('kronos-cf').className = `value ${cf >= 0 ? 'pos' : 'neg'}`;
+  setSignedValue($('kronos-actual'), m.actual_pnl_usd, 'inline');
+
+  const rows = data.trades.map((t) => {
+    const agreeCls = t.agreement ? 'pos' : 'neg';
+    const outcome = t.outcome_up ? 'UP' : 'DOWN';
+    const pnlCls = t.pnl == null ? '' : (parseFloat(t.pnl) >= 0 ? 'pos' : 'neg');
+    return `
+      <tr>
+        <td>${fmtTimestamp(t.entry_time)}</td>
+        <td>${t.side}</td>
+        <td>${Number(t.market_p_up).toFixed(3)}</td>
+        <td>${Number(t.kronos_p_up).toFixed(3)}</td>
+        <td>${outcome}</td>
+        <td class="${agreeCls}">${t.agreement ? '[+]' : '[×]'}</td>
+        <td class="pos-pnl ${pnlCls}">${fmtUsd(t.pnl)}</td>
+      </tr>
+    `;
+  }).join('');
+  $('kronos-trades-body').innerHTML = rows;
+}
+
 async function renderVersion() {
   try {
     const h = await api('/health');
@@ -235,5 +304,6 @@ async function statusTick() {
 
 wire();
 renderVersion();
+renderKronos();
 renderTrades();
 statusTick();

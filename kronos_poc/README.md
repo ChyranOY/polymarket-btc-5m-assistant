@@ -47,6 +47,35 @@ If Kronos log-loss ≥ market log-loss at every threshold, the signal has no edg
 on this sample. If the PnL curve has a region where edge is consistent and the
 sample is ≥100 trades, that's worth a second, larger pass.
 
+## Daily dashboard mode
+
+`daily_run.py` runs via GitHub Actions cron (`.github/workflows/kronos_daily.yml`)
+at 13:00 UTC (~6am PST, before the PST trading window opens). It:
+
+1. Pulls yesterday's closed rollover trades from Supabase.
+2. Runs Kronos-small with 20 Monte Carlo paths per market.
+3. Writes a JSON summary (metrics + per-trade rows).
+4. Publishes to an **orphan `data` branch** — NOT main — so the daily push
+   doesn't trigger a DigitalOcean redeploy.
+
+The dashboard fetches from `raw.githubusercontent.com/.../data/kronos_daily.json`
+and renders a card above the Recent Trades table. No server changes needed.
+
+### First-time setup
+
+1. In GitHub repo settings → Secrets → add `SUPABASE_URL` and
+   `SUPABASE_SERVICE_ROLE_KEY` (same values your DO app uses).
+2. Actions tab → "Kronos daily" → "Run workflow" to kick off a manual run.
+3. On first success, an orphan `data` branch is created with
+   `kronos_daily.json`. After that the dashboard card lights up.
+
+### Local dev
+
+```bash
+export SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... KRONOS_PATH=...
+python daily_run.py --samples 5   # writes static/kronos_daily.json (gitignored)
+```
+
 ## Limits of this POC
 
 - 355 trades is small. Signal needs to be strong to show through the noise.
