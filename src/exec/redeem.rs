@@ -1,10 +1,10 @@
 //! On-chain CTF token redemption for Polymarket winning positions.
 //!
 //! After a binary market settles, winning conditional tokens can be redeemed for
-//! $1 of USDC each via the ConditionalTokens contract on Polygon.
+//! $1 of pUSD each via the ConditionalTokens contract on Polygon.
 //!
 //! CTF contract: 0x4D97DCd97eC945f40cF65F87097ACe5EA0476045
-//! USDC (Polygon): 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174
+//! pUSD (V2 collateral, Polygon): 0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB
 //!
 //! Flow:
 //! 1. Query Polymarket data-api for redeemable positions
@@ -19,7 +19,9 @@ use rust_decimal::Decimal;
 use std::str::FromStr;
 
 const CTF_ADDRESS: &str = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045";
-const USDC_ADDRESS: &str = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
+/// Polymarket V2 collateral (pUSD). Replaced USDC.e `0x2791…84174` at the
+/// 2026-04-28 V2 cutover — CTF positions are now denominated in pUSD.
+const PUSD_ADDRESS: &str = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB";
 
 sol! {
     #[derive(Debug)]
@@ -93,7 +95,7 @@ pub async fn redeem_position_onchain(
     signer: &PrivateKeySigner,
     condition_id: &str,
 ) -> Result<String, String> {
-    let collateral = Address::from_str(USDC_ADDRESS).unwrap();
+    let collateral = Address::from_str(PUSD_ADDRESS).unwrap();
     let parent = FixedBytes::<32>::ZERO;
     let cond = FixedBytes::<32>::from_str(condition_id)
         .map_err(|e| format!("conditionId parse: {e}"))?;

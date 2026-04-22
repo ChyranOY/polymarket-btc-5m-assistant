@@ -48,6 +48,8 @@ pub struct LiveCreds {
     pub api_secret: String,
     pub passphrase: String,
     pub polygon_rpc_url: Option<String>,
+    /// V2 builder code as 0x-prefixed 32-byte hex; empty/None = no attribution.
+    pub builder_code: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -147,6 +149,7 @@ impl AppConfig {
                 api_secret: sk,
                 passphrase: pp,
                 polygon_rpc_url: env_opt("POLYGON_RPC_URL"),
+                builder_code: env_opt("BUILDER_CODE"),
             }),
             _ => None,
         };

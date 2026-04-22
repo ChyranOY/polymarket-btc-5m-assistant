@@ -4,7 +4,7 @@ use crate::data::clob_rest::ClobRest;
 use crate::error::{BotError, Result};
 use crate::model::{Balance, Mode, OpenPosition, Side};
 use crate::signing::api_auth::ClobAuth;
-use crate::signing::order_eip712::{sign_order, OrderParams};
+use crate::signing::order_eip712::{parse_bytes32, sign_order, OrderParams};
 use alloy::signers::local::PrivateKeySigner;
 use async_trait::async_trait;
 use chrono::Utc;
@@ -17,7 +17,6 @@ use uuid::Uuid;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const POLL_TIMEOUT: Duration = Duration::from_secs(30);
-const FEE_RATE_BPS: u64 = 100; // 1% taker fee
 
 pub struct LiveExecutor {
     auth: ClobAuth,
@@ -26,10 +25,14 @@ pub struct LiveExecutor {
     funder_address: String,
     chain_id: u64,
     polygon_rpc_url: Option<String>,
+    /// V2 builder code (bytes32). Zero = no builder attribution.
+    builder: [u8; 32],
 }
 
 impl LiveExecutor {
     pub fn new(creds: &LiveCreds, clob: Arc<ClobRest>, chain_id: u64) -> Result<Self> {
+        let builder = parse_bytes32(creds.builder_code.as_deref().unwrap_or(""))
+            .map_err(|e| BotError::cfg(format!("BUILDER_CODE: {e}")))?;
         let auth = ClobAuth::new(
             &creds.funder_address,
             &creds.api_key,
@@ -50,6 +53,7 @@ impl LiveExecutor {
             funder_address: creds.funder_address.clone(),
             chain_id,
             polygon_rpc_url: creds.polygon_rpc_url.clone(),
+            builder,
         })
     }
 
@@ -71,6 +75,9 @@ impl LiveExecutor {
             (to_raw_units(size), to_raw_units(usdc))
         };
 
+        let timestamp_ms = Utc::now().timestamp_millis().max(0) as u64;
+        let metadata = [0u8; 32];
+
         let params = OrderParams {
             salt,
             maker: self.funder_address.clone(),
@@ -79,29 +86,33 @@ impl LiveExecutor {
             maker_amount: Decimal::from_str_exact(&maker_amount).unwrap_or_default(),
             taker_amount: Decimal::from_str_exact(&taker_amount).unwrap_or_default(),
             side: side_u8,
-            fee_rate_bps: FEE_RATE_BPS,
             chain_id: self.chain_id,
             signature_type: 0,
+            timestamp_ms,
+            metadata,
+            builder: self.builder,
         };
 
         let signature = sign_order(&self.signer, &params)
             .await
             .map_err(|e| BotError::Signing(e))?;
 
+        let metadata_hex = format!("0x{}", alloy::primitives::hex::encode(metadata));
+        let builder_hex = format!("0x{}", alloy::primitives::hex::encode(self.builder));
+
         Ok(json!({
             "order": {
                 "salt": salt.to_string(),
                 "maker": self.funder_address,
                 "signer": self.funder_address,
-                "taker": "0x0000000000000000000000000000000000000000",
                 "tokenId": token_id,
                 "makerAmount": maker_amount,
                 "takerAmount": taker_amount,
-                "expiration": "0",
-                "nonce": "0",
-                "feeRateBps": FEE_RATE_BPS.to_string(),
                 "side": side_str,
                 "signatureType": 0,
+                "timestamp": timestamp_ms.to_string(),
+                "metadata": metadata_hex,
+                "builder": builder_hex,
                 "signature": signature
             },
             "orderType": "GTC"
