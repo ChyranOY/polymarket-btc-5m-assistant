@@ -19,8 +19,12 @@ use tokio::sync::mpsc;
 
 /// Max rows per PostgREST insert.
 const BATCH_SIZE: usize = 10;
-/// Upper bound on buffer age before flushing a partial batch.
-const FLUSH_INTERVAL: Duration = Duration::from_secs(30);
+/// Max age (from first buffered row) before the flusher gives up waiting for
+/// a full batch and posts whatever it has.
+const BATCH_WINDOW: Duration = Duration::from_secs(10);
+/// Upper bound on idle time between batches — triggers when no ticks arrive
+/// at all (e.g., off-hours).
+const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Max rows buffered in the channel before record() starts dropping.
 const CHANNEL_CAPACITY: usize = 512;
 
@@ -60,19 +64,22 @@ async fn flush_loop(mut rx: mpsc::Receiver<Value>, supabase: Arc<SupabaseClient>
     let mut buf: Vec<Value> = Vec::with_capacity(BATCH_SIZE);
     loop {
         // Wait for the first row (or a shutdown via channel close).
-        let first = match tokio::time::timeout(FLUSH_INTERVAL, rx.recv()).await {
+        let first = match tokio::time::timeout(IDLE_TIMEOUT, rx.recv()).await {
             Ok(Some(row)) => row,
             Ok(None) => break, // channel closed, drain complete
-            Err(_) => continue, // no rows arrived in FLUSH_INTERVAL; loop and wait again
+            Err(_) => continue, // no rows arrived in IDLE_TIMEOUT; loop and wait again
         };
         buf.push(first);
 
-        // Opportunistically drain up to BATCH_SIZE without blocking.
+        // Accumulate until BATCH_SIZE or BATCH_WINDOW from the first row,
+        // whichever comes first. Waiting here (instead of try_recv draining)
+        // is what actually batches ticks — the producer runs at ~1 Hz.
+        let deadline = tokio::time::Instant::now() + BATCH_WINDOW;
         while buf.len() < BATCH_SIZE {
-            match rx.try_recv() {
-                Ok(row) => buf.push(row),
-                Err(mpsc::error::TryRecvError::Empty) => break,
-                Err(mpsc::error::TryRecvError::Disconnected) => break,
+            match tokio::time::timeout_at(deadline, rx.recv()).await {
+                Ok(Some(row)) => buf.push(row),
+                Ok(None) => break,      // channel closed mid-batch
+                Err(_) => break,        // BATCH_WINDOW elapsed
             }
         }
 
