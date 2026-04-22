@@ -45,11 +45,13 @@ def fetch_trades(since: datetime, until: datetime) -> list[dict]:
     key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
     # PostgREST supports repeated filters on a column; pass params as a list
     # of tuples so both `gte.` and `lte.` bounds survive encoding.
+    # Score every closed trade in the window — Kronos eval derives the
+    # outcome from BTC price movement, so we don't need to restrict to
+    # rollover exits the way earlier backfill work did.
     r = requests.get(
         f"{base}/rest/v1/trades",
         params=[
             ("status", "eq.CLOSED"),
-            ("exitReason", "in.(market_rolled_won,market_rolled_lost)"),
             ("entryGateSnapshot", "like.*up_ask*"),
             ("entryTime", f"gte.{since.isoformat()}"),
             ("entryTime", f"lt.{until.isoformat()}"),
@@ -63,29 +65,36 @@ def fetch_trades(since: datetime, until: datetime) -> list[dict]:
     return r.json()
 
 
-def fetch_klines(end_ms: int) -> pd.DataFrame:
-    """Last LOOKBACK_MIN 1m candles ending at (but not including) end_ms.
-    Coinbase returns rows as [time_s, low, high, open, close, volume],
-    newest-first, granularity in seconds."""
-    end_s = end_ms // 1000
-    start_s = end_s - LOOKBACK_MIN * 60
+def _coinbase_fetch(start_s: int, end_s: int) -> pd.DataFrame:
+    """One Coinbase candles call. Caps at 300 rows — caller chunks if needed."""
     r = requests.get(COINBASE_CANDLES, params={
         "granularity": 60,
         "start": datetime.fromtimestamp(start_s, tz=timezone.utc).isoformat(),
-        "end": datetime.fromtimestamp(end_s - 1, tz=timezone.utc).isoformat(),
+        "end": datetime.fromtimestamp(end_s, tz=timezone.utc).isoformat(),
     }, timeout=15)
     r.raise_for_status()
     raw = r.json()
-    if not isinstance(raw, list) or len(raw) < LOOKBACK_MIN - 10:
+    if not isinstance(raw, list) or not raw:
         return pd.DataFrame()
     df = pd.DataFrame(raw, columns=["time_s", "low", "high", "open", "close", "volume"])
     df = df.sort_values("time_s").reset_index(drop=True)
     for c in ("open", "high", "low", "close", "volume"):
         df[c] = df[c].astype(float)
-    # Kronos wants `amount` (USD turnover). Approximate: close * volume.
     df["amount"] = df["close"] * df["volume"]
     df["timestamps"] = pd.to_datetime(df["time_s"], unit="s", utc=True)
     return df[["timestamps", "open", "high", "low", "close", "volume", "amount"]]
+
+
+def fetch_window(entry_ms: int, horizon_min: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return (lookback, future) 1m candle frames around entry_ms.
+    lookback ends at entry_ms; future covers the next `horizon_min` minutes.
+    Empty DFs on any fetch failure."""
+    entry_s = entry_ms // 1000
+    lookback = _coinbase_fetch(entry_s - LOOKBACK_MIN * 60, entry_s - 1)
+    if lookback.empty or len(lookback) < LOOKBACK_MIN - 10:
+        return pd.DataFrame(), pd.DataFrame()
+    future = _coinbase_fetch(entry_s, entry_s + horizon_min * 60)
+    return lookback, future
 
 
 def kronos_p_up(predictor: KronosPredictor, candles: pd.DataFrame,
@@ -165,31 +174,37 @@ def main() -> None:
             down_ask = float(snap["down_ask"]) if snap.get("down_ask") else None
             if up_ask is None or down_ask is None or not (0 < up_ask < 1):
                 continue
+            # Horizon = how long until the market settles (stored at entry).
+            # Fall back to the full 5-minute window if missing.
+            time_left_sec = int(snap.get("time_left_sec") or 300)
+            horizon_min = max(1, min(HORIZON_MIN, (time_left_sec + 59) // 60))
+
             entry_dt = datetime.fromisoformat(t["entryTime"].replace("Z", "+00:00"))
-            end_ms = int(entry_dt.timestamp() * 1000)
-            candles = fetch_klines(end_ms)
-            if candles.empty:
+            entry_ms = int(entry_dt.timestamp() * 1000)
+            lookback, future = fetch_window(entry_ms, horizon_min)
+            if lookback.empty or future.empty:
                 continue
             time.sleep(0.05)
-            p_up = kronos_p_up(predictor, candles, args.samples, args.T, args.top_p)
 
+            entry_close = float(lookback["close"].iloc[-1])
+            settle_close = float(future["close"].iloc[-1])
+            outcome_up = int(settle_close > entry_close)
+
+            p_up = kronos_p_up(predictor, lookback, args.samples, args.T, args.top_p)
             side = (t.get("side") or "").upper()
-            reason = t.get("exitReason") or ""
-            outcome_up = int((side == "UP") == (reason == "market_rolled_won"))
-            # "Agreement" = Kronos's side matches what we actually traded.
             kronos_go_up = p_up > 0.5
             bot_go_up = side == "UP"
-            agreement = kronos_go_up == bot_go_up
             scored.append({
                 "id": t["id"],
                 "entry_time": t["entryTime"],
                 "slug": t.get("marketSlug"),
                 "side": side,
+                "exit_reason": t.get("exitReason"),
                 "market_p_up": up_ask,
                 "kronos_p_up": p_up,
                 "outcome_up": outcome_up,
                 "pnl": float(t["pnl"]) if t.get("pnl") is not None else None,
-                "agreement": agreement,
+                "agreement": kronos_go_up == bot_go_up,
             })
         except Exception as e:
             print(f"skip {t.get('id')}: {e}")
