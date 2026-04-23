@@ -51,11 +51,18 @@ pub fn evaluate_exit(
         .unwrap_or(snapshot.price_for(position.side));
     let pnl = position.unrealized_pnl(mark);
 
+    // Ride ITM to settlement: once the market agrees we've almost certainly
+    // won (mark ≥ 0.90) AND there's barely any time left for a reversal
+    // (< 60s), skip the trailing-TP check entirely. Stop-loss still runs
+    // below, so a catastrophic reversal still closes us out.
+    let time_left_sec = (position.market_end_date - now).num_seconds();
+    let ride_to_settlement = mark >= rust_decimal_macros::dec!(0.90) && time_left_sec < 60;
+
     // Trailing take-profit: once MFE crosses the activation threshold, exit on a
     // giveback of the peak. Checked before stop-loss so a reversal from a winning
     // peak closes at a small gain instead of riding all the way to stop-out.
     let activation_abs = position.contract_size * cfg.take_profit_activation_pct;
-    if position.max_unrealized_pnl >= activation_abs {
+    if !ride_to_settlement && position.max_unrealized_pnl >= activation_abs {
         let giveback_threshold = position.max_unrealized_pnl * cfg.take_profit_giveback_pct;
         if pnl <= giveback_threshold {
             return ExitDecision::Exit(ExitReason::TakeProfit);
@@ -225,6 +232,30 @@ mod tests {
         let mut p = pos("m", Side::Up, dec!(0.25), dec!(100));
         p.max_unrealized_pnl = dec!(20);
         let s = snap("m", 180, dec!(0.17)); // pnl = -8
+        let state = EngineState::default();
+        let d = evaluate_exit(&state, &p, &s, &cfg(), chrono::Utc::now());
+        assert!(matches!(d, ExitDecision::Exit(ExitReason::TakeProfit)));
+    }
+
+    #[test]
+    fn ride_itm_suspends_trailing_tp_near_settlement() {
+        // Peak was +20 (armed). Now at +10 which would normally trip giveback.
+        // But mark is 0.95 and <60s left → ride to settlement instead.
+        let mut p = pos("m", Side::Up, dec!(0.25), dec!(100));
+        p.max_unrealized_pnl = dec!(20);
+        let s = snap("m", 30, dec!(0.95));
+        let state = EngineState::default();
+        let d = evaluate_exit(&state, &p, &s, &cfg(), chrono::Utc::now());
+        assert!(matches!(d, ExitDecision::Hold));
+    }
+
+    #[test]
+    fn ride_itm_does_not_trigger_with_lots_of_time_left() {
+        // 3 min left, same high mark — ride-ITM shouldn't apply; trailing-TP
+        // works normally (giveback fires because pnl retraced 50% from peak).
+        let mut p = pos("m", Side::Up, dec!(0.25), dec!(100));
+        p.max_unrealized_pnl = dec!(20);
+        let s = snap("m", 180, dec!(0.35)); // pnl +10 = 50% of peak 20 → giveback
         let state = EngineState::default();
         let d = evaluate_exit(&state, &p, &s, &cfg(), chrono::Utc::now());
         assert!(matches!(d, ExitDecision::Exit(ExitReason::TakeProfit)));
