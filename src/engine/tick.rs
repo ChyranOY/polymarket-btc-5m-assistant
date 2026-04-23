@@ -1,6 +1,7 @@
 use crate::config::AppConfig;
 use crate::data::clob_rest::{ClobRest, PriceSide};
 use crate::data::clob_ws::ClobWs;
+use crate::data::coinbase_ws::CoinbaseWs;
 use crate::engine::entry::{evaluate_entry, EntryDecision};
 use crate::engine::exit::{evaluate_exit, ExitDecision, ExitReason};
 use crate::engine::sizing::{kelly_size, size_trade};
@@ -29,6 +30,7 @@ pub struct EngineHandle {
     pub clob_ws: Option<ClobWs>,
     pub supabase: Arc<SupabaseClient>,
     pub tick_recorder: Option<Arc<TickRecorder>>,
+    pub coinbase_ws: Option<CoinbaseWs>,
     pub cfg: Arc<AppConfig>,
 }
 
@@ -171,6 +173,21 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
         (h.tick_recorder.as_ref(), position_snapshot)
     {
         let mode = h.current_mode().await;
+        // Snapshot spot + short-window deltas (may be None on boot).
+        let (btc_spot, btc_spot_at, spot_delta_30s, spot_delta_1m) =
+            if let Some(ws) = h.coinbase_ws.as_ref() {
+                let latest = ws.latest().await;
+                let d30 = ws.delta_pct(std::time::Duration::from_secs(30)).await;
+                let d60 = ws.delta_pct(std::time::Duration::from_secs(60)).await;
+                (
+                    latest.as_ref().map(|s| s.price),
+                    latest.map(|s| s.at),
+                    d30,
+                    d60,
+                )
+            } else {
+                (None, None, None, None)
+            };
         let spread_up = match (snapshot.up_ask, snapshot.up_bid) {
             (Some(a), Some(b)) => Some(a - b),
             _ => None,
@@ -192,6 +209,8 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
             "upBid": snapshot.up_bid,
             "downAsk": snapshot.down_ask,
             "downBid": snapshot.down_bid,
+            "btcSpotAt": btc_spot_at,
+            "spotDelta30sPct": spot_delta_30s,
             "position": position_meta,
         });
         recorder.record(json!({
@@ -202,6 +221,8 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
             "poly_down": snapshot.down_price,
             "spread_up": spread_up,
             "spread_down": spread_down,
+            "btc_spot": btc_spot,
+            "spot_delta_1m_pct": spot_delta_1m,
             "rec_side": rec_side,
             "rec_phase": "holding",
             "meta": meta,

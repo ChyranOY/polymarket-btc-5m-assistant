@@ -29,6 +29,7 @@ async fn main() -> Result<()> {
     let gamma = data::gamma::GammaClient::new(&cfg.polymarket)?;
     let clob = Arc::new(data::clob_rest::ClobRest::new(&cfg.polymarket)?);
     let clob_ws = data::clob_ws::ClobWs::start(cfg.polymarket.ws_market_url.clone());
+    let coinbase_ws = data::coinbase_ws::CoinbaseWs::start();
     let supabase = Arc::new(store::supabase::SupabaseClient::new(&cfg.supabase)?);
     let tick_recorder = store::tick_recorder::TickRecorder::start(supabase.clone());
 
@@ -85,6 +86,7 @@ async fn main() -> Result<()> {
         clob_ws: Some(clob_ws.clone()),
         supabase: supabase.clone(),
         tick_recorder: tick_recorder.clone(),
+        coinbase_ws: Some(coinbase_ws.clone()),
         cfg: cfg.clone(),
     });
 
