@@ -180,6 +180,10 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
             _ => None,
         };
         let meta = json!({
+            // Real per-tick timestamp. `created_at` at the table level is set
+            // by PostgREST at flush time, so a batch of N ticks all share one
+            // `created_at` — replay sorts on this `recordedAt` instead.
+            "recordedAt": now,
             "mode": mode.as_str(),
             "upTokenId": snapshot.up_token_id,
             "downTokenId": snapshot.down_token_id,

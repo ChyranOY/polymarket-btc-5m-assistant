@@ -295,6 +295,63 @@ impl SupabaseClient {
         }
     }
 
+    /// Fetch signal_ticks rows whose `created_at` falls in [start, end], ordered
+    /// by (market_slug, created_at). Only returns rows with a non-null `meta`
+    /// column — i.e., rows written by the Rust tick_recorder, not the legacy
+    /// Node writer.
+    pub async fn fetch_signal_ticks_window(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        limit: usize,
+    ) -> Result<Vec<Value>> {
+        let Some(url) = self.rest("signal_ticks") else { return Ok(Vec::new()) };
+        // Supabase enforces a hard max-rows cap (typically 1000) regardless
+        // of the Range header — paginate via `offset` until we hit `limit`
+        // or the server returns fewer rows than our page size.
+        const PAGE: usize = 1000;
+        let mut out: Vec<Value> = Vec::new();
+        let mut offset: usize = 0;
+        while out.len() < limit {
+            let remaining = limit - out.len();
+            let page_size = remaining.min(PAGE);
+            let resp = self
+                .http
+                .get(&url)
+                .query(&[
+                    ("meta", "not.is.null".to_string()),
+                    ("created_at", format!("gte.{}", start.to_rfc3339())),
+                    ("created_at", format!("lte.{}", end.to_rfc3339())),
+                    ("order", "market_slug.asc,created_at.asc".to_string()),
+                    ("limit", page_size.to_string()),
+                    ("offset", offset.to_string()),
+                ])
+                .send()
+                .await?;
+            let status = resp.status();
+            if !status.is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                return Err(BotError::Supabase { status: status.as_u16(), body });
+            }
+            let v: Value = resp.json().await?;
+            let rows = match v {
+                Value::Array(a) => a,
+                other => {
+                    return Err(BotError::parse(format!(
+                        "signal_ticks: expected array, got {other:?}"
+                    )))
+                }
+            };
+            let n = rows.len();
+            out.extend(rows);
+            if n < page_size {
+                break;
+            }
+            offset += n;
+        }
+        Ok(out)
+    }
+
     /// Batched signal_ticks insert. Accepts any JSON array; schema is loose.
     pub async fn insert_signal_ticks(&self, rows: &[Value]) -> Result<()> {
         if rows.is_empty() {
