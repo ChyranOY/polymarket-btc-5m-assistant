@@ -429,3 +429,59 @@ tr:last-child td { border-bottom: none; }
   font-size: 0.85em;
   font-weight: 700;
 }
+
+/* Strategies documentation tab */
+.strategies-doc .strategy {
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: var(--space-md);
+  margin-bottom: var(--space-md);
+  background: var(--bg-soft, rgba(255, 255, 255, 0.02));
+}
+.strategies-doc .strategy header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+.strategies-doc .strategy h3 {
+  margin: 0;
+  color: var(--text-display);
+  font-size: 1.05em;
+  letter-spacing: 0.04em;
+}
+.strategies-doc .strategy p {
+  margin: var(--space-xs, 6px) 0 var(--space-sm) 0;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.strategies-doc .strategy ul {
+  margin: 0;
+  padding-left: 1.25em;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+.strategies-doc .strategy code {
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.9em;
+}
+.strategy-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.75em;
+  letter-spacing: 0.1em;
+}
+.strategy-chip.strategy-cheap_side {
+  background: rgba(180, 180, 180, 0.12);
+  color: var(--text-secondary);
+}
+.strategy-chip.strategy-momentum {
+  background: rgba(255, 179, 71, 0.15);
+  color: #ffb347;
+  font-weight: 700;
+}

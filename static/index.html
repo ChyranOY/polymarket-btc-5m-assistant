@@ -135,6 +135,7 @@
         <div class="tabs">
           <div class="tab-buttons" role="tablist">
             <button type="button" class="tab-button active" data-tab="trades" role="tab" aria-selected="true">Recent trades</button>
+            <button type="button" class="tab-button" data-tab="strategies" role="tab" aria-selected="false">Strategies</button>
             <button type="button" class="tab-button" data-tab="kronos" role="tab" aria-selected="false">Kronos · Yesterday</button>
           </div>
           <div class="tab-actions">
@@ -162,6 +163,67 @@
               <tr><td colspan="9" class="muted center">[ NO TRADES ]</td></tr>
             </tbody>
           </table>
+        </div>
+
+        <div class="tab-panel" data-tab-panel="strategies" hidden>
+          <div class="strategies-doc">
+            <p class="muted" style="margin-bottom: var(--space-lg)">
+              The bot can enter a trade through one of two paths. Each trade in the Recent trades list is tagged with which one fired.
+            </p>
+
+            <article class="strategy">
+              <header>
+                <span class="strategy-chip strategy-cheap_side">CHEAP</span>
+                <h3>Cheap side</h3>
+              </header>
+              <p>Buys whichever side of the market is priced between <code>CHEAP_SIDE_MIN</code> and <code>CHEAP_SIDE_MAX</code>. A value bet — if the "cheap" side is mispriced, winning pays more than losing costs.</p>
+              <ul>
+                <li>Default range: <code>0.15</code> – <code>0.45</code></li>
+                <li>Needs at least <code>TIME_LEFT_MIN_MINUTES</code> (1.5 min) left in the market</li>
+                <li>Spread must be under <code>MAX_ENTRY_SPREAD</code> (0.04)</li>
+                <li>Uses Kelly sizing when <code>KELLY_ENABLED=true</code>, otherwise flat <code>STAKE_PCT</code>.</li>
+              </ul>
+            </article>
+
+            <article class="strategy">
+              <header>
+                <span class="strategy-chip strategy-momentum">MOMENTUM</span>
+                <h3>Momentum</h3>
+              </header>
+              <p>Bets the direction BTC just moved. When Coinbase spot shifts hard in two minutes (±$100), the 5-min Polymarket contract rarely reverses in time.</p>
+              <ul>
+                <li>Threshold: absolute BTC change ≥ $100 over the trailing 120 seconds</li>
+                <li>Ignores <code>cheap_side</code> bounds — momentum trades can enter at any price the spread gate allows</li>
+                <li>Still respects the spread gate and all base skip reasons (cooldown, position-open, etc.)</li>
+                <li>Direction: UP if spot went up, DOWN if it went down</li>
+              </ul>
+            </article>
+
+            <article class="strategy">
+              <header>
+                <span class="strategy-chip" style="background: transparent; border: 1px solid var(--border-visible); color: var(--text-secondary);">EXIT RULE</span>
+                <h3>Ride ITM to settlement</h3>
+              </header>
+              <p>Independent of strategy — applies to every open position. When a winning trade is almost certain to settle at $1.00, the trailing take-profit is suspended so the position rides all the way home instead of bailing at 70-90% of peak.</p>
+              <ul>
+                <li>Triggers when <code>mark ≥ 0.90</code> AND less than 60 seconds remain</li>
+                <li>Stop-loss still fires on catastrophic reversals</li>
+              </ul>
+            </article>
+
+            <article class="strategy">
+              <header>
+                <span class="strategy-chip" style="background: transparent; border: 1px solid var(--border-visible); color: var(--text-secondary);">SHARED</span>
+                <h3>Exit rules (all trades)</h3>
+              </header>
+              <ul>
+                <li><strong>Stop-loss</strong>: exits at <code>−STOP_LOSS_PCT × contract_size</code> (currently −30%).</li>
+                <li><strong>Trailing take-profit</strong>: arms once peak PnL reaches <code>TAKE_PROFIT_ACTIVATION_PCT × contract_size</code> (10%), then exits if PnL retraces below <code>TAKE_PROFIT_GIVEBACK_PCT × peak</code> (currently 90%).</li>
+                <li><strong>Market rollover</strong>: if the current 5-minute market ends, the position closes at settlement.</li>
+                <li><strong>Kill switch</strong>: manual exit via the control endpoint.</li>
+              </ul>
+            </article>
+          </div>
         </div>
 
         <div class="tab-panel" data-tab-panel="kronos" hidden>
