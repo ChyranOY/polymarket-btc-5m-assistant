@@ -69,19 +69,30 @@ impl CoinbaseWs {
     /// Returns `None` when no sample in history is old enough (bot just booted
     /// or the feed is reconnecting), or on zero/negative prices.
     pub async fn delta_pct(&self, window: Duration) -> Option<Decimal> {
-        let history = self.history.read().await;
-        let latest = history.back()?;
-        let window_dur = chrono::Duration::from_std(window).ok()?;
-        // Walk from newest to oldest; take the first sample whose age (relative
-        // to `latest`) is at least `window`. That's the anchor point.
-        let past = history
-            .iter()
-            .rev()
-            .find(|s| latest.at - s.at >= window_dur)?;
+        let (latest, past) = self.anchor_pair(window).await?;
         if past.price <= Decimal::ZERO {
             return None;
         }
         Some(((latest.price - past.price) / past.price) * Decimal::from(100))
+    }
+
+    /// Absolute USD change vs. the most recent sample at least `window` old.
+    /// Positive = price went up. None when history is too short.
+    pub async fn delta_abs(&self, window: Duration) -> Option<Decimal> {
+        let (latest, past) = self.anchor_pair(window).await?;
+        Some(latest.price - past.price)
+    }
+
+    async fn anchor_pair(&self, window: Duration) -> Option<(SpotSample, SpotSample)> {
+        let history = self.history.read().await;
+        let latest = history.back()?.clone();
+        let window_dur = chrono::Duration::from_std(window).ok()?;
+        let past = history
+            .iter()
+            .rev()
+            .find(|s| latest.at - s.at >= window_dur)?
+            .clone();
+        Some((latest, past))
     }
 }
 

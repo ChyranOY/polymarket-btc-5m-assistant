@@ -252,12 +252,21 @@ pub fn evaluate_gates(
     GateReport { all_pass, gates }
 }
 
+/// Momentum entry: if BTC spot moved hard in the same direction over the last
+/// 2 minutes (>= $100 USD), bet that direction — it rarely reverses inside a
+/// 5-min window. Hard-coded thresholds for now; promote to config if we tune.
+const MOMENTUM_MIN_ABS_USD: i64 = 100;
+
 /// Pure entry-gate function. The engine calls this every tick; no I/O, no mutation.
+///
+/// `spot_delta_2m_abs` is the BTC spot price change in USD over the trailing
+/// 2-minute window (from the Coinbase feed). `None` when history is too short.
 pub fn evaluate_entry(
     state: &EngineState,
     snapshot: &MarketSnapshot,
     cfg: &TradingConfig,
     now: DateTime<Utc>,
+    spot_delta_2m_abs: Option<Decimal>,
 ) -> EntryDecision {
     if !state.trading_enabled {
         return EntryDecision::Skip(SkipReason::TradingDisabled);
@@ -305,6 +314,35 @@ pub fn evaluate_entry(
     let down_ask = snapshot.down_ask;
     if up_ask.is_none() && down_ask.is_none() {
         return EntryDecision::Skip(SkipReason::PricesUnavailable);
+    }
+
+    // Momentum override: if BTC spot moved hard over the last 2 minutes
+    // (|delta| >= $100), enter that side regardless of cheap-side range.
+    // Momentum trades skip the cheap_side bounds but still respect the spread gate.
+    let momentum_threshold = Decimal::from(MOMENTUM_MIN_ABS_USD);
+    if let Some(delta) = spot_delta_2m_abs {
+        if delta.abs() >= momentum_threshold {
+            let side = if delta > Decimal::ZERO { Side::Up } else { Side::Down };
+            let ask = match side {
+                Side::Up => up_ask,
+                Side::Down => down_ask,
+            };
+            if let Some(price) = ask {
+                // Spread gate still applies.
+                if let (Some(a), Some(b)) = (snapshot.ask_for(side), snapshot.bid_for(side)) {
+                    if a - b > cfg.max_entry_spread {
+                        return EntryDecision::Skip(SkipReason::SpreadTooWide);
+                    }
+                }
+                let phase = MarketPhase::from_minutes_left(snapshot.time_left_minutes(now));
+                return EntryDecision::Enter(EntryOrder {
+                    side,
+                    price,
+                    limit_price: None,
+                    phase,
+                });
+            }
+        }
     }
 
     let up_ok = up_ask
@@ -430,7 +468,7 @@ mod tests {
     fn trading_disabled_blocks() {
         let s = EngineState::default();
         let snap = snapshot(Some(dec!(0.25)), Some(dec!(0.75)), 4);
-        let d = evaluate_entry(&s, &snap, &cfg(), weekday_active_now());
+        let d = evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), None);
         assert!(matches!(d, EntryDecision::Skip(SkipReason::TradingDisabled)));
     }
 
@@ -438,7 +476,7 @@ mod tests {
     fn happy_path_picks_cheap_side() {
         let s = enabled_state();
         let snap = snapshot(Some(dec!(0.25)), Some(dec!(0.75)), 4);
-        match evaluate_entry(&s, &snap, &cfg(), weekday_active_now()) {
+        match evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), None) {
             EntryDecision::Enter(o) => {
                 assert_eq!(o.side, Side::Up);
                 assert_eq!(o.price, dec!(0.25));
@@ -451,7 +489,7 @@ mod tests {
     fn picks_cheaper_of_two_in_range() {
         let s = enabled_state();
         let snap = snapshot(Some(dec!(0.40)), Some(dec!(0.30)), 4);
-        match evaluate_entry(&s, &snap, &cfg(), weekday_active_now()) {
+        match evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), None) {
             EntryDecision::Enter(o) => {
                 assert_eq!(o.side, Side::Down);
                 assert_eq!(o.price, dec!(0.30));
@@ -465,7 +503,7 @@ mod tests {
         let s = enabled_state();
         let snap = snapshot(Some(dec!(0.10)), Some(dec!(0.90)), 4);
         assert!(matches!(
-            evaluate_entry(&s, &snap, &cfg(), weekday_active_now()),
+            evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), None),
             EntryDecision::Skip(SkipReason::CheapSideOutOfRange)
         ));
     }
@@ -475,7 +513,7 @@ mod tests {
         let s = enabled_state();
         let snap = snapshot(None, None, 4);
         assert!(matches!(
-            evaluate_entry(&s, &snap, &cfg(), weekday_active_now()),
+            evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), None),
             EntryDecision::Skip(SkipReason::PricesUnavailable)
         ));
     }
@@ -485,7 +523,7 @@ mod tests {
         let s = enabled_state();
         let snap = snapshot(Some(dec!(0.25)), Some(dec!(0.75)), 1); // 1 min left, need 1.5
         assert!(matches!(
-            evaluate_entry(&s, &snap, &cfg(), weekday_active_now()),
+            evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), None),
             EntryDecision::Skip(SkipReason::MarketNotAlive)
         ));
     }
@@ -497,7 +535,7 @@ mod tests {
         let after_hours = Utc.with_ymd_and_hms(2026, 4, 15, 2, 0, 0).unwrap();
         let snap = snapshot_at(Some(dec!(0.25)), Some(dec!(0.75)), 4, after_hours);
         assert!(matches!(
-            evaluate_entry(&s, &snap, &cfg(), after_hours),
+            evaluate_entry(&s, &snap, &cfg(), after_hours, None),
             EntryDecision::Skip(SkipReason::OutsideTradingHours)
         ));
     }
@@ -522,7 +560,7 @@ mod tests {
         });
         let snap = snapshot(Some(dec!(0.25)), Some(dec!(0.75)), 4);
         assert!(matches!(
-            evaluate_entry(&s, &snap, &cfg(), weekday_active_now()),
+            evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), None),
             EntryDecision::Skip(SkipReason::OpenPositionExists)
         ));
     }

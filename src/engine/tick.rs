@@ -326,7 +326,19 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
     } else {
         // No position: consider entering.
         let state_snapshot = h.state.lock().await.clone();
-        let decision = evaluate_entry(&state_snapshot, &snapshot, &h.cfg.trading, now);
+        // 2-minute BTC spot delta (USD) from Coinbase — feeds the momentum branch.
+        let spot_delta_2m_abs = if let Some(ws) = h.coinbase_ws.as_ref() {
+            ws.delta_abs(std::time::Duration::from_secs(120)).await
+        } else {
+            None
+        };
+        let decision = evaluate_entry(
+            &state_snapshot,
+            &snapshot,
+            &h.cfg.trading,
+            now,
+            spot_delta_2m_abs,
+        );
         drop(state_snapshot);
 
         match decision {
