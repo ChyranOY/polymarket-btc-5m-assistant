@@ -261,7 +261,7 @@ pub fn evaluate_gates(
 /// Momentum entry: if BTC spot moved hard in the same direction over the last
 /// 2 minutes (>= $100 USD), bet that direction — it rarely reverses inside a
 /// 5-min window. Hard-coded thresholds for now; promote to config if we tune.
-const MOMENTUM_MIN_ABS_USD: i64 = 100;
+const MOMENTUM_MIN_ABS_USD: i64 = 50;
 
 /// Pure entry-gate function. The engine calls this every tick; no I/O, no mutation.
 ///

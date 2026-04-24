@@ -192,7 +192,7 @@
               </header>
               <p>Bets the direction BTC just moved. When Coinbase spot shifts hard in two minutes (±$100), the 5-min Polymarket contract rarely reverses in time.</p>
               <ul>
-                <li>Threshold: absolute BTC change ≥ $100 over the trailing 120 seconds</li>
+                <li>Threshold: absolute BTC change ≥ $50 over the trailing 120 seconds</li>
                 <li>Ignores <code>cheap_side</code> bounds — momentum trades can enter at any price the spread gate allows</li>
                 <li>Still respects the spread gate and all base skip reasons (cooldown, position-open, etc.)</li>
                 <li>Direction: UP if spot went up, DOWN if it went down</li>
