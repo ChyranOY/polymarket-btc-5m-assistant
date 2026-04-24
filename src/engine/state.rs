@@ -133,6 +133,10 @@ impl EngineState {
 
     pub fn record_trade_closed(&mut self, trade: Trade, now: DateTime<Utc>) {
         self.maybe_roll_daily_pnl(now);
+        // Cooldown applies only after *losing* trades — no need to sit out
+        // after a winner. Default to "losing" when pnl is missing so we err on
+        // the side of waiting.
+        let lost = trade.pnl.map(|p| p < dec!(0)).unwrap_or(true);
         if let Some(p) = trade.pnl {
             self.daily_pnl += p;
             self.balance += p;
@@ -145,7 +149,11 @@ impl EngineState {
         self.position = None;
         self.last_position_mark = None;
         self.last_traded_slug = Some(trade.market_slug.clone());
-        self.last_exit_time = Some(now);
+        if lost {
+            self.last_exit_time = Some(now);
+        } else {
+            self.last_exit_time = None;
+        }
         self.recent_trades.push(trade);
         // cap recent trades in-memory
         let max = 100;
