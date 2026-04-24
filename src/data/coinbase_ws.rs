@@ -29,9 +29,10 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 const WS_URL: &str = "wss://ws-feed.exchange.coinbase.com";
 const PRODUCT: &str = "BTC-USD";
-/// How much history to retain. Longest delta window we expose is 1 minute;
-/// keep 2x to give lookups slack near the edge.
-const HISTORY_RETENTION: Duration = Duration::from_secs(120);
+/// How much history to retain. Longest delta window we expose is 2 minutes
+/// (momentum entry). Keep noticeably more so `delta_abs(120)` lookups don't
+/// fail on the edge when the oldest sample was just trimmed.
+const HISTORY_RETENTION: Duration = Duration::from_secs(240);
 /// Socket gets a reconnect if no frame arrives in this long. Coinbase sends
 /// matches + heartbeats frequently on BTC-USD; 30s of silence means dead TCP.
 const READ_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
