@@ -71,12 +71,18 @@ impl MarketPhase {
     }
 }
 
+/// Which entry path triggered this order — stored on the trade row so the UI
+/// and replay tools can split performance by strategy.
+pub const STRATEGY_CHEAP_SIDE: &str = "cheap_side";
+pub const STRATEGY_MOMENTUM: &str = "momentum";
+
 #[derive(Debug, Clone)]
 pub struct EntryOrder {
     pub side: Side,
     pub price: Decimal,
     pub limit_price: Option<Decimal>,
     pub phase: MarketPhase,
+    pub strategy: &'static str,
 }
 
 #[derive(Debug, Clone)]
@@ -340,6 +346,7 @@ pub fn evaluate_entry(
                     price,
                     limit_price: None,
                     phase,
+                    strategy: STRATEGY_MOMENTUM,
                 });
             }
         }
@@ -385,6 +392,7 @@ pub fn evaluate_entry(
         price,
         limit_price: None, // tick loop fills this in via Kelly if enabled
         phase,
+        strategy: STRATEGY_CHEAP_SIDE,
     })
 }
 

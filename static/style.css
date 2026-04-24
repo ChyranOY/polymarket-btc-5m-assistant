@@ -416,3 +416,16 @@ tr:last-child td { border-bottom: none; }
   .gates .gate { grid-template-columns: 28px 1fr; gap: var(--space-sm); }
   .gates .gate-detail { grid-column: 2 / 3; text-align: left; }
 }
+
+/* Strategy badges — distinguishes cheap-side vs momentum entries at a glance. */
+.strategy-cheap_side, .strategy-cheap {
+  color: var(--text-secondary);
+  letter-spacing: 0.08em;
+  font-size: 0.85em;
+}
+.strategy-momentum {
+  color: #ffb347;
+  letter-spacing: 0.08em;
+  font-size: 0.85em;
+  font-weight: 700;
+}

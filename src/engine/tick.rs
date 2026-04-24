@@ -398,7 +398,7 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
                 };
                 let executor = h.executor.read().await.clone();
                 let open = executor.open_position(req).await?;
-                let trade = new_open_trade(&open.position, &snapshot, now);
+                let trade = new_open_trade(&open.position, &snapshot, now, order.strategy);
                 if let Err(e) = h.supabase.upsert_trade(&trade).await {
                     tracing::warn!(err = %e, "supabase upsert (open) failed");
                 }
@@ -520,6 +520,7 @@ fn new_open_trade(
     pos: &crate::model::OpenPosition,
     snapshot: &MarketSnapshot,
     now: chrono::DateTime<chrono::Utc>,
+    strategy: &str,
 ) -> Trade {
     Trade {
         id: pos.id.clone(),
@@ -544,6 +545,7 @@ fn new_open_trade(
                 "up_ask": snapshot.up_ask.map(|d| d.to_string()),
                 "down_ask": snapshot.down_ask.map(|d| d.to_string()),
                 "time_left_sec": snapshot.time_left_sec(now),
+                "strategy": strategy,
             })
             .to_string(),
         ),

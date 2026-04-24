@@ -166,10 +166,23 @@ async function renderTrades() {
       const pnl = r.pnl ?? null;
       const pnlCls = pnl == null ? '' : (parseFloat(pnl) >= 0 ? 'pos' : 'neg');
       const reason = r.exitReason || (r.status === 'OPEN' ? 'OPEN' : '—');
+      // Strategy lives inside entryGateSnapshot JSON ("strategy" field).
+      // Older rows (pre-tag) will show CHEAP by default.
+      let strategy = 'CHEAP';
+      const snap = r.entryGateSnapshot || r.entry_gate_snapshot;
+      if (snap) {
+        try {
+          const parsed = typeof snap === 'string' ? JSON.parse(snap) : snap;
+          if (parsed && parsed.strategy) {
+            strategy = String(parsed.strategy).toUpperCase();
+          }
+        } catch {}
+      }
       return `
         <tr>
           <td>${fmtTimestamp(r.entryTime || r.entry_time)}</td>
           <td>${(r.mode || '—').toUpperCase()}</td>
+          <td class="strategy-${strategy.toLowerCase()}">${strategy}</td>
           <td>${r.side || '—'}</td>
           <td>${r.entryPrice != null ? Number(r.entryPrice).toFixed(4) : '—'}</td>
           <td>${r.exitPrice != null ? Number(r.exitPrice).toFixed(4) : '—'}</td>
