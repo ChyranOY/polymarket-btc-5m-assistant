@@ -397,7 +397,10 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
                     shares,
                 };
                 let executor = h.executor.read().await.clone();
-                let open = executor.open_position(req).await?;
+                let mut open = executor.open_position(req).await?;
+                // Stamp the strategy onto the position so evaluate_exit can
+                // branch on it (momentum trades skip the trailing-TP entirely).
+                open.position.entry_strategy = Some(order.strategy.to_string());
                 let trade = new_open_trade(&open.position, &snapshot, now, order.strategy);
                 if let Err(e) = h.supabase.upsert_trade(&trade).await {
                     tracing::warn!(err = %e, "supabase upsert (open) failed");

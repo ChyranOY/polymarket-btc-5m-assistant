@@ -196,6 +196,7 @@
                 <li>Ignores <code>cheap_side</code> bounds — momentum trades can enter at any price the spread gate allows</li>
                 <li>Still respects the spread gate and all base skip reasons (cooldown, position-open, etc.)</li>
                 <li>Direction: UP if spot went up, DOWN if it went down</li>
+                <li><strong>No trailing take-profit</strong> — momentum trades ride to settlement (or stop-loss). Either we were right about the direction or we weren't.</li>
               </ul>
             </article>
 

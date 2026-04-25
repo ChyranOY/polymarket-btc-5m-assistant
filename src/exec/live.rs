@@ -199,6 +199,7 @@ impl Executor for LiveExecutor {
             mode: Mode::Live,
             max_unrealized_pnl: dec!(0),
             min_unrealized_pnl: dec!(0),
+            entry_strategy: None,
         };
 
         tracing::info!(

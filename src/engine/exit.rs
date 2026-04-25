@@ -58,11 +58,20 @@ pub fn evaluate_exit(
     let time_left_sec = (position.market_end_date - now).num_seconds();
     let ride_to_settlement = mark >= rust_decimal_macros::dec!(0.90) && time_left_sec < 60;
 
+    // Momentum trades skip the trailing-TP entirely — they're meant to ride
+    // to settlement (or stop-loss) since the directional thesis is the whole
+    // edge. Cheap-side trades keep the trailer.
+    let is_momentum = position
+        .entry_strategy
+        .as_deref()
+        .map(|s| s == "momentum")
+        .unwrap_or(false);
+
     // Trailing take-profit: once MFE crosses the activation threshold, exit on a
     // giveback of the peak. Checked before stop-loss so a reversal from a winning
     // peak closes at a small gain instead of riding all the way to stop-out.
     let activation_abs = position.contract_size * cfg.take_profit_activation_pct;
-    if !ride_to_settlement && position.max_unrealized_pnl >= activation_abs {
+    if !ride_to_settlement && !is_momentum && position.max_unrealized_pnl >= activation_abs {
         let giveback_threshold = position.max_unrealized_pnl * cfg.take_profit_giveback_pct;
         if pnl <= giveback_threshold {
             return ExitDecision::Exit(ExitReason::TakeProfit);
@@ -131,6 +140,7 @@ mod tests {
             mode: Mode::Paper,
             max_unrealized_pnl: dec!(0),
             min_unrealized_pnl: dec!(0),
+            entry_strategy: None,
         }
     }
 
@@ -235,6 +245,19 @@ mod tests {
         let state = EngineState::default();
         let d = evaluate_exit(&state, &p, &s, &cfg(), chrono::Utc::now());
         assert!(matches!(d, ExitDecision::Exit(ExitReason::TakeProfit)));
+    }
+
+    #[test]
+    fn momentum_position_skips_trailing_tp() {
+        // Same setup that fires TP on a cheap-side trade — but momentum trades
+        // hold instead and ride to settlement / SL.
+        let mut p = pos("m", Side::Up, dec!(0.25), dec!(100));
+        p.max_unrealized_pnl = dec!(20);
+        p.entry_strategy = Some("momentum".into());
+        let s = snap("m", 180, dec!(0.35)); // would normally trigger giveback
+        let state = EngineState::default();
+        let d = evaluate_exit(&state, &p, &s, &cfg(), chrono::Utc::now());
+        assert!(matches!(d, ExitDecision::Hold));
     }
 
     #[test]

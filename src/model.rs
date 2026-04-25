@@ -127,6 +127,12 @@ pub struct OpenPosition {
     pub mode: Mode,
     pub max_unrealized_pnl: Decimal,
     pub min_unrealized_pnl: Decimal,
+    /// Which entry path opened this position ("cheap_side" or "momentum").
+    /// Used by `evaluate_exit` to suppress trailing-TP for momentum trades.
+    /// Optional so existing OPEN rows reconciled at boot don't break — they
+    /// fall back to the conservative behavior (TP runs).
+    #[serde(default)]
+    pub entry_strategy: Option<String>,
 }
 
 impl OpenPosition {

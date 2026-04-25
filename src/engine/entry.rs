@@ -565,6 +565,7 @@ mod tests {
             mode: Mode::Paper,
             max_unrealized_pnl: dec!(0),
             min_unrealized_pnl: dec!(0),
+            entry_strategy: None,
         });
         let snap = snapshot(Some(dec!(0.25)), Some(dec!(0.75)), 4);
         assert!(matches!(

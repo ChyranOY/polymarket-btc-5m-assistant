@@ -135,6 +135,7 @@ impl Executor for PaperExecutor {
             mode: Mode::Paper,
             max_unrealized_pnl: dec!(0),
             min_unrealized_pnl: dec!(0),
+            entry_strategy: None,
         };
         guard.position = Some(position.clone());
         self.persist_locked(&guard).await?;
