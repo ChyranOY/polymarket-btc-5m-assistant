@@ -202,24 +202,12 @@
 
             <article class="strategy">
               <header>
-                <span class="strategy-chip" style="background: transparent; border: 1px solid var(--border-visible); color: var(--text-secondary);">EXIT RULE</span>
-                <h3>Ride ITM to settlement</h3>
-              </header>
-              <p>Independent of strategy — applies to every open position. When a winning trade is almost certain to settle at $1.00, the trailing take-profit is suspended so the position rides all the way home instead of bailing at 70-90% of peak.</p>
-              <ul>
-                <li>Triggers when <code>mark ≥ 0.90</code> AND less than 60 seconds remain</li>
-                <li>Stop-loss still fires on catastrophic reversals</li>
-              </ul>
-            </article>
-
-            <article class="strategy">
-              <header>
                 <span class="strategy-chip" style="background: transparent; border: 1px solid var(--border-visible); color: var(--text-secondary);">SHARED</span>
                 <h3>Exit rules (all trades)</h3>
               </header>
               <ul>
                 <li><strong>Stop-loss</strong>: exits at <code>−STOP_LOSS_PCT × contract_size</code> (currently −30%).</li>
-                <li><strong>Trailing take-profit</strong>: arms once peak PnL reaches <code>TAKE_PROFIT_ACTIVATION_PCT × contract_size</code> (10%), then exits if PnL retraces below <code>TAKE_PROFIT_GIVEBACK_PCT × peak</code> (currently 90%).</li>
+                <li><strong>Take-profit removed 2026-04-27</strong> — winners ride to settlement (or stop-loss). Avg-win was half avg-loss, so the trailing TP was a net leak.</li>
                 <li><strong>Market rollover</strong>: if the current 5-minute market ends, the position closes at settlement.</li>
                 <li><strong>Kill switch</strong>: manual exit via the control endpoint.</li>
               </ul>

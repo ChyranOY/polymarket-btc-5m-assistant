@@ -51,32 +51,11 @@ pub fn evaluate_exit(
         .unwrap_or(snapshot.price_for(position.side));
     let pnl = position.unrealized_pnl(mark);
 
-    // Ride ITM to settlement: once the market agrees we've almost certainly
-    // won (mark ≥ 0.90) AND there's barely any time left for a reversal
-    // (< 60s), skip the trailing-TP check entirely. Stop-loss still runs
-    // below, so a catastrophic reversal still closes us out.
-    let time_left_sec = (position.market_end_date - now).num_seconds();
-    let ride_to_settlement = mark >= rust_decimal_macros::dec!(0.90) && time_left_sec < 60;
-
-    // Momentum trades skip the trailing-TP entirely — they're meant to ride
-    // to settlement (or stop-loss) since the directional thesis is the whole
-    // edge. Cheap-side trades keep the trailer.
-    let is_momentum = position
-        .entry_strategy
-        .as_deref()
-        .map(|s| s == "momentum")
-        .unwrap_or(false);
-
-    // Trailing take-profit: once MFE crosses the activation threshold, exit on a
-    // giveback of the peak. Checked before stop-loss so a reversal from a winning
-    // peak closes at a small gain instead of riding all the way to stop-out.
-    let activation_abs = position.contract_size * cfg.take_profit_activation_pct;
-    if !ride_to_settlement && !is_momentum && position.max_unrealized_pnl >= activation_abs {
-        let giveback_threshold = position.max_unrealized_pnl * cfg.take_profit_giveback_pct;
-        if pnl <= giveback_threshold {
-            return ExitDecision::Exit(ExitReason::TakeProfit);
-        }
-    }
+    // Trailing take-profit removed 2026-04-27. 124 trades over the prior 48h
+    // showed avg TP win ($9.90) was barely half avg SL loss ($17.47), and
+    // trades that escaped the trailer to settle realized ~3× larger wins
+    // ($27.38). Letting every position ride to stop-loss or settlement.
+    // `cfg.take_profit_*` fields stay defined but go unused here.
 
     // Stop-loss: unrealized pnl <= -(contract_size * stop_loss_pct)
     let stop_loss_threshold = -(position.contract_size * cfg.stop_loss_pct);
@@ -212,76 +191,28 @@ mod tests {
     }
 
     #[test]
-    fn take_profit_fires_after_armed_giveback() {
-        // contract_size = 0.25 * 100 = 25. activation @ 20% → arm once mfe >= 5.
-        // giveback @ 50% → exit when current pnl <= 50% of peak.
+    fn tp_disabled_holds_through_giveback() {
+        // Pre-removal, peak +$20 with current pnl back at +$10 would trip the
+        // 50% giveback. Now the trailing-TP is gone — the position must HOLD
+        // until SL or rollover. This locks in the new behavior.
         let mut p = pos("m", Side::Up, dec!(0.25), dec!(100));
-        p.max_unrealized_pnl = dec!(20); // peak +$20 (80% of contract), armed
-        // current mark 0.35 → pnl = (0.35-0.25)*100 = +10 → 50% of peak 20
+        p.max_unrealized_pnl = dec!(20);
         let s = snap("m", 180, dec!(0.35));
         let state = EngineState::default();
         let d = evaluate_exit(&state, &p, &s, &cfg(), chrono::Utc::now());
-        assert!(matches!(d, ExitDecision::Exit(ExitReason::TakeProfit)));
-    }
-
-    #[test]
-    fn take_profit_does_not_fire_before_activation() {
-        // peak +$4 (below +5 activation). No exit even if current dropped.
-        let mut p = pos("m", Side::Up, dec!(0.25), dec!(100));
-        p.max_unrealized_pnl = dec!(4);
-        let s = snap("m", 180, dec!(0.26)); // pnl = +1, well under peak, but not armed
-        let state = EngineState::default();
-        let d = evaluate_exit(&state, &p, &s, &cfg(), chrono::Utc::now());
         assert!(matches!(d, ExitDecision::Hold));
     }
 
     #[test]
-    fn take_profit_preempts_stop_loss_when_both_trip() {
-        // Peak was +20 (armed). Now at -8 which is BELOW stop-loss (-7.5).
-        // Take-profit retracement check runs first → TakeProfit.
+    fn stop_loss_still_fires_when_giveback_would_have() {
+        // Same mark that previously made TakeProfit pre-empt SL — now SL fires
+        // because there's no TP path left.
         let mut p = pos("m", Side::Up, dec!(0.25), dec!(100));
         p.max_unrealized_pnl = dec!(20);
-        let s = snap("m", 180, dec!(0.17)); // pnl = -8
+        let s = snap("m", 180, dec!(0.17)); // pnl = -8, below SL threshold of -7.5
         let state = EngineState::default();
         let d = evaluate_exit(&state, &p, &s, &cfg(), chrono::Utc::now());
-        assert!(matches!(d, ExitDecision::Exit(ExitReason::TakeProfit)));
-    }
-
-    #[test]
-    fn momentum_position_skips_trailing_tp() {
-        // Same setup that fires TP on a cheap-side trade — but momentum trades
-        // hold instead and ride to settlement / SL.
-        let mut p = pos("m", Side::Up, dec!(0.25), dec!(100));
-        p.max_unrealized_pnl = dec!(20);
-        p.entry_strategy = Some("momentum".into());
-        let s = snap("m", 180, dec!(0.35)); // would normally trigger giveback
-        let state = EngineState::default();
-        let d = evaluate_exit(&state, &p, &s, &cfg(), chrono::Utc::now());
-        assert!(matches!(d, ExitDecision::Hold));
-    }
-
-    #[test]
-    fn ride_itm_suspends_trailing_tp_near_settlement() {
-        // Peak was +20 (armed). Now at +10 which would normally trip giveback.
-        // But mark is 0.95 and <60s left → ride to settlement instead.
-        let mut p = pos("m", Side::Up, dec!(0.25), dec!(100));
-        p.max_unrealized_pnl = dec!(20);
-        let s = snap("m", 30, dec!(0.95));
-        let state = EngineState::default();
-        let d = evaluate_exit(&state, &p, &s, &cfg(), chrono::Utc::now());
-        assert!(matches!(d, ExitDecision::Hold));
-    }
-
-    #[test]
-    fn ride_itm_does_not_trigger_with_lots_of_time_left() {
-        // 3 min left, same high mark — ride-ITM shouldn't apply; trailing-TP
-        // works normally (giveback fires because pnl retraced 50% from peak).
-        let mut p = pos("m", Side::Up, dec!(0.25), dec!(100));
-        p.max_unrealized_pnl = dec!(20);
-        let s = snap("m", 180, dec!(0.35)); // pnl +10 = 50% of peak 20 → giveback
-        let state = EngineState::default();
-        let d = evaluate_exit(&state, &p, &s, &cfg(), chrono::Utc::now());
-        assert!(matches!(d, ExitDecision::Exit(ExitReason::TakeProfit)));
+        assert!(matches!(d, ExitDecision::Exit(ExitReason::StopLoss)));
     }
 
     #[test]
