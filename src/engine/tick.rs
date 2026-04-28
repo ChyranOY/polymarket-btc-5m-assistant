@@ -326,9 +326,10 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
     } else {
         // No position: consider entering.
         let state_snapshot = h.state.lock().await.clone();
-        // 2-minute BTC spot delta (USD) from Coinbase — feeds the momentum branch.
-        let spot_delta_2m_abs = if let Some(ws) = h.coinbase_ws.as_ref() {
-            ws.delta_abs(std::time::Duration::from_secs(120)).await
+        // 30-second BTC spot percent delta from Coinbase — direction
+        // confirmation for the favorite-strategy entry.
+        let spot_delta_30s_pct = if let Some(ws) = h.coinbase_ws.as_ref() {
+            ws.delta_pct(std::time::Duration::from_secs(30)).await
         } else {
             None
         };
@@ -337,7 +338,7 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
             &snapshot,
             &h.cfg.trading,
             now,
-            spot_delta_2m_abs,
+            spot_delta_30s_pct,
         );
         drop(state_snapshot);
 

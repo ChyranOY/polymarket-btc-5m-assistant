@@ -168,49 +168,42 @@
         <div class="tab-panel" data-tab-panel="strategies" hidden>
           <div class="strategies-doc">
             <p class="muted" style="margin-bottom: var(--space-lg)">
-              The bot can enter a trade through one of two paths. Each trade in the Recent trades list is tagged with which one fired.
+              One entry path. The bot only enters when the market thinks the answer is mostly known AND BTC spot agrees.
             </p>
 
             <article class="strategy">
               <header>
-                <span class="strategy-chip strategy-cheap_side">CHEAP</span>
-                <h3>Cheap side</h3>
+                <span class="strategy-chip strategy-favorite">FAVORITE</span>
+                <h3>Favorite + spot confirmation</h3>
               </header>
-              <p>Buys whichever side of the market is priced between <code>CHEAP_SIDE_MIN</code> and <code>CHEAP_SIDE_MAX</code>. A value bet — if the "cheap" side is mispriced, winning pays more than losing costs.</p>
+              <p>Buys whichever side of the market is the favorite (highest priced) once its ask is in the <code>0.75 – 0.97</code> band, and BTC spot has moved in that direction over the last 30 seconds. Two independent signals must agree before a trade fires.</p>
               <ul>
-                <li>Default range: <code>0.15</code> – <code>0.45</code></li>
-                <li>Needs at least <code>TIME_LEFT_MIN_MINUTES</code> (1.5 min) left in the market</li>
-                <li>Spread must be under <code>MAX_ENTRY_SPREAD</code> (0.04)</li>
-                <li>Uses Kelly sizing when <code>KELLY_ENABLED=true</code>, otherwise flat <code>STAKE_PCT</code>.</li>
-              </ul>
-            </article>
-
-            <article class="strategy">
-              <header>
-                <span class="strategy-chip strategy-momentum">MOMENTUM</span>
-                <h3>Momentum</h3>
-              </header>
-              <p>Bets the direction BTC just moved. When Coinbase spot shifts hard in two minutes (±$100), the 5-min Polymarket contract rarely reverses in time.</p>
-              <ul>
-                <li>Threshold: absolute BTC change ≥ $50 over the trailing 120 seconds</li>
-                <li>Ignores <code>cheap_side</code> bounds — momentum trades can enter at any price the spread gate allows</li>
-                <li>Still respects the spread gate and all base skip reasons (cooldown, position-open, etc.)</li>
-                <li>Direction: UP if spot went up, DOWN if it went down</li>
-                <li><strong>No trailing take-profit</strong> — momentum trades ride to settlement (or stop-loss). Either we were right about the direction or we weren't.</li>
+                <li>Pick favorite: side with the higher ask (closer to $1).</li>
+                <li>Price gate: <code>0.75 ≤ ask ≤ 0.97</code>. Below 0.75 is too uncertain; above 0.97 leaves no profit room for the SL risk.</li>
+                <li>Spot gate: 30-second BTC change must agree with the side. UP needs <code>delta &gt; 0</code>; DOWN needs <code>delta &lt; 0</code>. Flat or missing data = skip.</li>
+                <li>Standard guards still apply: spread ≤ <code>MAX_ENTRY_SPREAD</code>, ≥ <code>TIME_LEFT_MIN_MINUTES</code> left, no open position, cooldown clear, in trading hours.</li>
               </ul>
             </article>
 
             <article class="strategy">
               <header>
                 <span class="strategy-chip" style="background: transparent; border: 1px solid var(--border-visible); color: var(--text-secondary);">SHARED</span>
-                <h3>Exit rules (all trades)</h3>
+                <h3>Exit rules</h3>
               </header>
               <ul>
                 <li><strong>Stop-loss</strong>: exits at <code>−STOP_LOSS_PCT × contract_size</code> (currently −30%).</li>
-                <li><strong>Take-profit removed 2026-04-27</strong> — winners ride to settlement (or stop-loss). Avg-win was half avg-loss, so the trailing TP was a net leak.</li>
-                <li><strong>Market rollover</strong>: if the current 5-minute market ends, the position closes at settlement.</li>
+                <li><strong>No take-profit</strong> — winners ride to settlement. Removed 2026-04-27 because the trailer was cutting wins to half the size of an average loss.</li>
+                <li><strong>Market rollover</strong>: position closes at settlement when the 5-minute market ends.</li>
                 <li><strong>Kill switch</strong>: manual exit via the control endpoint.</li>
               </ul>
+            </article>
+
+            <article class="strategy">
+              <header>
+                <span class="strategy-chip" style="background: transparent; border: 1px solid var(--border-visible); color: var(--text-secondary);">RETIRED</span>
+                <h3>Cheap side &amp; momentum (2026-04-28)</h3>
+              </header>
+              <p class="muted">The cheap-side value bet (0.15–0.45 range) and the momentum-chase ($50 in 2 min) were both removed when we switched to the favorite-with-confirmation model. Historical trades still carry their original strategy tag.</p>
             </article>
           </div>
         </div>

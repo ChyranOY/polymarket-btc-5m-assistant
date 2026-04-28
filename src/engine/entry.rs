@@ -16,7 +16,10 @@ pub enum SkipReason {
     WarmingUp,
     OutsideTradingHours,
     MarketNotAlive,
-    CheapSideOutOfRange,
+    FavoriteAskTooLow,    // no side priced at FAVORITE_MIN or above
+    FavoriteAskTooHigh,   // favorite already at FAVORITE_MAX — no profit margin left
+    SpotConfirmationMissing, // Coinbase history not yet warm enough for direction check
+    SpotDirectionMismatch,   // BTC spot is moving against the favorite side
     SpreadTooWide,
     NegativeExpectedValue,
     PricesUnavailable,
@@ -33,7 +36,10 @@ impl SkipReason {
             SkipReason::WarmingUp => "warming_up",
             SkipReason::OutsideTradingHours => "outside_trading_hours",
             SkipReason::MarketNotAlive => "market_not_alive",
-            SkipReason::CheapSideOutOfRange => "cheap_side_out_of_range",
+            SkipReason::FavoriteAskTooLow => "favorite_ask_too_low",
+            SkipReason::FavoriteAskTooHigh => "favorite_ask_too_high",
+            SkipReason::SpotConfirmationMissing => "spot_confirmation_missing",
+            SkipReason::SpotDirectionMismatch => "spot_direction_mismatch",
             SkipReason::SpreadTooWide => "spread_too_wide",
             SkipReason::NegativeExpectedValue => "negative_expected_value",
             SkipReason::PricesUnavailable => "prices_unavailable",
@@ -73,8 +79,17 @@ impl MarketPhase {
 
 /// Which entry path triggered this order — stored on the trade row so the UI
 /// and replay tools can split performance by strategy.
-pub const STRATEGY_CHEAP_SIDE: &str = "cheap_side";
-pub const STRATEGY_MOMENTUM: &str = "momentum";
+pub const STRATEGY_FAVORITE: &str = "favorite";
+
+/// Lower bound for the favorite's ask price. Below this, the outcome is still
+/// uncertain enough that we don't have an edge.
+const FAVORITE_MIN_ASK: rust_decimal::Decimal = rust_decimal_macros::dec!(0.75);
+/// Upper bound — above this there's no profit margin worth the SL risk.
+const FAVORITE_MAX_ASK: rust_decimal::Decimal = rust_decimal_macros::dec!(0.97);
+/// Spot-direction confirmation window. Must agree with the chosen side.
+/// Used by `tick.rs` when computing `spot_delta_30s_pct` from CoinbaseWs.
+#[allow(dead_code)]
+const SPOT_CONFIRMATION_SECS: u64 = 30;
 
 #[derive(Debug, Clone)]
 pub struct EntryOrder {
@@ -210,29 +225,35 @@ pub fn evaluate_gates(
             Some(format!("up={} down={}", fmt_ask(up_ask), fmt_ask(dn_ask))),
         );
 
-        let up_in = up_ask
-            .map(|p| p >= cfg.cheap_side_min && p <= cfg.cheap_side_max)
-            .unwrap_or(false);
-        let dn_in = dn_ask
-            .map(|p| p >= cfg.cheap_side_min && p <= cfg.cheap_side_max)
+        // Identify the favorite (the side priced higher) and check the
+        // FAVORITE_MIN_ASK / FAVORITE_MAX_ASK band.
+        let (fav_side, fav_ask) = match (up_ask, dn_ask) {
+            (Some(u), Some(d)) if u >= d => (Some(Side::Up), Some(u)),
+            (Some(_), Some(d)) => (Some(Side::Down), Some(d)),
+            (Some(u), None) => (Some(Side::Up), Some(u)),
+            (None, Some(d)) => (Some(Side::Down), Some(d)),
+            _ => (None, None),
+        };
+        let in_band = fav_ask
+            .map(|p| p >= FAVORITE_MIN_ASK && p <= FAVORITE_MAX_ASK)
             .unwrap_or(false);
         push(
             &mut gates,
-            "cheap_side_in_range",
-            up_in || dn_in,
+            "favorite_in_range",
+            in_band,
             Some(format!(
-                "bounds [{}, {}]",
-                cfg.cheap_side_min, cfg.cheap_side_max
+                "favorite={} bounds [{}, {}]",
+                fmt_ask(fav_ask),
+                FAVORITE_MIN_ASK,
+                FAVORITE_MAX_ASK
             )),
         );
 
-        // Evaluate spread on the side that `evaluate_entry` would pick.
-        let (side_ask, side_bid) = if up_in && (!dn_in || up_ask <= dn_ask) {
-            (sn.up_ask, sn.up_bid)
-        } else if dn_in {
-            (sn.down_ask, sn.down_bid)
-        } else {
-            (None, None)
+        // Evaluate spread on the favorite side.
+        let (side_ask, side_bid) = match fav_side {
+            Some(Side::Up) => (sn.up_ask, sn.up_bid),
+            Some(Side::Down) => (sn.down_ask, sn.down_bid),
+            None => (None, None),
         };
         let (spread_ok, spread_detail) = match (side_ask, side_bid) {
             (Some(a), Some(b)) => {
@@ -258,21 +279,23 @@ pub fn evaluate_gates(
     GateReport { all_pass, gates }
 }
 
-/// Momentum entry: if BTC spot moved hard in the same direction over the last
-/// 2 minutes (>= $100 USD), bet that direction — it rarely reverses inside a
-/// 5-min window. Hard-coded thresholds for now; promote to config if we tune.
-const MOMENTUM_MIN_ABS_USD: i64 = 50;
-
 /// Pure entry-gate function. The engine calls this every tick; no I/O, no mutation.
 ///
-/// `spot_delta_2m_abs` is the BTC spot price change in USD over the trailing
-/// 2-minute window (from the Coinbase feed). `None` when history is too short.
+/// **Strategy: Favorite.** Buy whichever side's ask is between
+/// `FAVORITE_MIN_ASK` (0.75) and `FAVORITE_MAX_ASK` (0.97), but only when
+/// BTC spot is also moving in that direction over the last
+/// `SPOT_CONFIRMATION_SECS` (30s). The market has mostly priced in the
+/// outcome and BTC's recent move agrees — high-conviction late entry.
+///
+/// `spot_delta_30s_pct` is the BTC spot percent change over the trailing
+/// 30 seconds (from the Coinbase feed). `None` when history is too short
+/// (just booted / reconnecting) — we skip rather than guess.
 pub fn evaluate_entry(
     state: &EngineState,
     snapshot: &MarketSnapshot,
     cfg: &TradingConfig,
     now: DateTime<Utc>,
-    spot_delta_2m_abs: Option<Decimal>,
+    spot_delta_30s_pct: Option<Decimal>,
 ) -> EntryDecision {
     if !state.trading_enabled {
         return EntryDecision::Skip(SkipReason::TradingDisabled);
@@ -288,14 +311,12 @@ pub fn evaluate_entry(
     {
         return EntryDecision::Skip(SkipReason::AlreadyTradedThisMarket);
     }
-    // 5-minute cooldown after any exit to prevent revenge-trading on the next market.
     if let Some(exit_time) = state.last_exit_time {
         let cooldown_sec = cfg.cooldown_after_exit_sec as i64;
         if (now - exit_time).num_seconds() < cooldown_sec {
             return EntryDecision::Skip(SkipReason::CooldownActive);
         }
     }
-    // Warmup period after boot: let WS book + market scheduler stabilize.
     let uptime_sec = (now - state.boot_time).num_seconds();
     if uptime_sec < cfg.warmup_ticks as i64 {
         return EntryDecision::Skip(SkipReason::WarmingUp);
@@ -315,84 +336,56 @@ pub fn evaluate_entry(
         return EntryDecision::Skip(SkipReason::MarketNotAlive);
     }
 
-    // Need at least one side's ask price to judge "cheap side".
     let up_ask = snapshot.up_ask;
     let down_ask = snapshot.down_ask;
     if up_ask.is_none() && down_ask.is_none() {
         return EntryDecision::Skip(SkipReason::PricesUnavailable);
     }
 
-    // Momentum override: if BTC spot moved hard over the last 2 minutes
-    // (|delta| >= $100), enter that side regardless of cheap-side range.
-    // Momentum trades skip the cheap_side bounds but still respect the spread gate.
-    let momentum_threshold = Decimal::from(MOMENTUM_MIN_ABS_USD);
-    if let Some(delta) = spot_delta_2m_abs {
-        if delta.abs() >= momentum_threshold {
-            let side = if delta > Decimal::ZERO { Side::Up } else { Side::Down };
-            let ask = match side {
-                Side::Up => up_ask,
-                Side::Down => down_ask,
-            };
-            if let Some(price) = ask {
-                // Spread gate still applies.
-                if let (Some(a), Some(b)) = (snapshot.ask_for(side), snapshot.bid_for(side)) {
-                    if a - b > cfg.max_entry_spread {
-                        return EntryDecision::Skip(SkipReason::SpreadTooWide);
-                    }
-                }
-                let phase = MarketPhase::from_minutes_left(snapshot.time_left_minutes(now));
-                return EntryDecision::Enter(EntryOrder {
-                    side,
-                    price,
-                    limit_price: None,
-                    phase,
-                    strategy: STRATEGY_MOMENTUM,
-                });
-            }
-        }
+    // Pick the favorite — the side priced higher (closer to $1).
+    let (side, price) = match (up_ask, down_ask) {
+        (Some(u), Some(d)) if u >= d => (Side::Up, u),
+        (Some(_), Some(d)) => (Side::Down, d),
+        (Some(u), None) => (Side::Up, u),
+        (None, Some(d)) => (Side::Down, d),
+        _ => return EntryDecision::Skip(SkipReason::PricesUnavailable),
+    };
+
+    if price < FAVORITE_MIN_ASK {
+        return EntryDecision::Skip(SkipReason::FavoriteAskTooLow);
+    }
+    if price > FAVORITE_MAX_ASK {
+        return EntryDecision::Skip(SkipReason::FavoriteAskTooHigh);
     }
 
-    let up_ok = up_ask
-        .map(|p| p >= cfg.cheap_side_min && p <= cfg.cheap_side_max)
-        .unwrap_or(false);
-    let down_ok = down_ask
-        .map(|p| p >= cfg.cheap_side_min && p <= cfg.cheap_side_max)
-        .unwrap_or(false);
-
-    let pick = match (up_ok, down_ok) {
-        (false, false) => return EntryDecision::Skip(SkipReason::CheapSideOutOfRange),
-        (true, false) => Some((Side::Up, up_ask.unwrap())),
-        (false, true) => Some((Side::Down, down_ask.unwrap())),
-        (true, true) => {
-            // Both sides are cheap — take the cheaper one.
-            let up = up_ask.unwrap();
-            let dn = down_ask.unwrap();
-            if up <= dn {
-                Some((Side::Up, up))
-            } else {
-                Some((Side::Down, dn))
-            }
-        }
-    };
-
-    let Some((side, price)) = pick else {
-        return EntryDecision::Skip(SkipReason::CheapSideOutOfRange);
-    };
-
-    // Spread gate: bid-ask must be tight enough for a good fill.
+    // Spread gate.
     if let (Some(ask), Some(bid)) = (snapshot.ask_for(side), snapshot.bid_for(side)) {
         if ask - bid > cfg.max_entry_spread {
             return EntryDecision::Skip(SkipReason::SpreadTooWide);
         }
     }
 
+    // Confirmation: BTC spot must be moving in the same direction as the
+    // favorite over the trailing 30s. UP needs +delta, DOWN needs −delta.
+    let delta = match spot_delta_30s_pct {
+        Some(d) => d,
+        None => return EntryDecision::Skip(SkipReason::SpotConfirmationMissing),
+    };
+    let direction_ok = match side {
+        Side::Up => delta > Decimal::ZERO,
+        Side::Down => delta < Decimal::ZERO,
+    };
+    if !direction_ok {
+        return EntryDecision::Skip(SkipReason::SpotDirectionMismatch);
+    }
+
     let phase = MarketPhase::from_minutes_left(snapshot.time_left_minutes(now));
     EntryDecision::Enter(EntryOrder {
         side,
         price,
-        limit_price: None, // tick loop fills this in via Kelly if enabled
+        limit_price: None,
         phase,
-        strategy: STRATEGY_CHEAP_SIDE,
+        strategy: STRATEGY_FAVORITE,
     })
 }
 
@@ -472,47 +465,88 @@ mod tests {
         s
     }
 
+    /// 0.5% positive 30s spot delta — confirms an UP entry.
+    fn spot_up() -> Option<Decimal> { Some(dec!(0.5)) }
+    /// 0.5% negative 30s spot delta — confirms a DOWN entry.
+    fn spot_down() -> Option<Decimal> { Some(dec!(-0.5)) }
+    /// Flat spot — direction can't be confirmed.
+    fn spot_flat() -> Option<Decimal> { Some(dec!(0)) }
+
     #[test]
     fn trading_disabled_blocks() {
         let s = EngineState::default();
-        let snap = snapshot(Some(dec!(0.25)), Some(dec!(0.75)), 4);
-        let d = evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), None);
+        let snap = snapshot(Some(dec!(0.20)), Some(dec!(0.80)), 4);
+        let d = evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), spot_up());
         assert!(matches!(d, EntryDecision::Skip(SkipReason::TradingDisabled)));
     }
 
     #[test]
-    fn happy_path_picks_cheap_side() {
+    fn happy_path_picks_favorite_with_spot_confirmation() {
+        // DOWN at 0.80 is the favorite; spot is moving down → confirmed.
         let s = enabled_state();
-        let snap = snapshot(Some(dec!(0.25)), Some(dec!(0.75)), 4);
-        match evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), None) {
+        let snap = snapshot(Some(dec!(0.20)), Some(dec!(0.80)), 4);
+        match evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), spot_down()) {
             EntryDecision::Enter(o) => {
-                assert_eq!(o.side, Side::Up);
-                assert_eq!(o.price, dec!(0.25));
+                assert_eq!(o.side, Side::Down);
+                assert_eq!(o.price, dec!(0.80));
+                assert_eq!(o.strategy, STRATEGY_FAVORITE);
             }
             other => panic!("expected Enter, got {other:?}"),
         }
     }
 
     #[test]
-    fn picks_cheaper_of_two_in_range() {
+    fn favorite_below_min_skips() {
+        // No side ≥ 0.75 — too uncertain to bet either way.
         let s = enabled_state();
-        let snap = snapshot(Some(dec!(0.40)), Some(dec!(0.30)), 4);
-        match evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), None) {
-            EntryDecision::Enter(o) => {
-                assert_eq!(o.side, Side::Down);
-                assert_eq!(o.price, dec!(0.30));
-            }
-            other => panic!("got {other:?}"),
-        }
+        let snap = snapshot(Some(dec!(0.40)), Some(dec!(0.60)), 4);
+        assert!(matches!(
+            evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), spot_up()),
+            EntryDecision::Skip(SkipReason::FavoriteAskTooLow)
+        ));
     }
 
     #[test]
-    fn out_of_range_skips() {
+    fn favorite_above_max_skips() {
+        // 0.99 is too tight a margin for the SL risk.
         let s = enabled_state();
-        let snap = snapshot(Some(dec!(0.10)), Some(dec!(0.90)), 4);
+        let snap = snapshot(Some(dec!(0.01)), Some(dec!(0.99)), 4);
+        assert!(matches!(
+            evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), spot_down()),
+            EntryDecision::Skip(SkipReason::FavoriteAskTooHigh)
+        ));
+    }
+
+    #[test]
+    fn spot_direction_mismatch_skips() {
+        // DOWN favorite but spot is moving UP — refuse to fight the trend.
+        let s = enabled_state();
+        let snap = snapshot(Some(dec!(0.20)), Some(dec!(0.80)), 4);
+        assert!(matches!(
+            evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), spot_up()),
+            EntryDecision::Skip(SkipReason::SpotDirectionMismatch)
+        ));
+    }
+
+    #[test]
+    fn flat_spot_counts_as_mismatch() {
+        // Zero delta — no confirmation either way; skip rather than guess.
+        let s = enabled_state();
+        let snap = snapshot(Some(dec!(0.20)), Some(dec!(0.80)), 4);
+        assert!(matches!(
+            evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), spot_flat()),
+            EntryDecision::Skip(SkipReason::SpotDirectionMismatch)
+        ));
+    }
+
+    #[test]
+    fn missing_spot_data_skips() {
+        // Coinbase feed not warm yet.
+        let s = enabled_state();
+        let snap = snapshot(Some(dec!(0.20)), Some(dec!(0.80)), 4);
         assert!(matches!(
             evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), None),
-            EntryDecision::Skip(SkipReason::CheapSideOutOfRange)
+            EntryDecision::Skip(SkipReason::SpotConfirmationMissing)
         ));
     }
 
@@ -521,7 +555,7 @@ mod tests {
         let s = enabled_state();
         let snap = snapshot(None, None, 4);
         assert!(matches!(
-            evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), None),
+            evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), spot_up()),
             EntryDecision::Skip(SkipReason::PricesUnavailable)
         ));
     }
@@ -529,9 +563,9 @@ mod tests {
     #[test]
     fn near_settlement_skips() {
         let s = enabled_state();
-        let snap = snapshot(Some(dec!(0.25)), Some(dec!(0.75)), 1); // 1 min left, need 1.5
+        let snap = snapshot(Some(dec!(0.20)), Some(dec!(0.80)), 1);
         assert!(matches!(
-            evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), None),
+            evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), spot_down()),
             EntryDecision::Skip(SkipReason::MarketNotAlive)
         ));
     }
@@ -539,11 +573,10 @@ mod tests {
     #[test]
     fn outside_hours_skips() {
         let s = enabled_state();
-        // Wed 02:00 UTC == Tue 18:00 PST (after window)
         let after_hours = Utc.with_ymd_and_hms(2026, 4, 15, 2, 0, 0).unwrap();
-        let snap = snapshot_at(Some(dec!(0.25)), Some(dec!(0.75)), 4, after_hours);
+        let snap = snapshot_at(Some(dec!(0.20)), Some(dec!(0.80)), 4, after_hours);
         assert!(matches!(
-            evaluate_entry(&s, &snap, &cfg(), after_hours, None),
+            evaluate_entry(&s, &snap, &cfg(), after_hours, spot_down()),
             EntryDecision::Skip(SkipReason::OutsideTradingHours)
         ));
     }
@@ -567,9 +600,9 @@ mod tests {
             min_unrealized_pnl: dec!(0),
             entry_strategy: None,
         });
-        let snap = snapshot(Some(dec!(0.25)), Some(dec!(0.75)), 4);
+        let snap = snapshot(Some(dec!(0.20)), Some(dec!(0.80)), 4);
         assert!(matches!(
-            evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), None),
+            evaluate_entry(&s, &snap, &cfg(), weekday_active_now(), spot_down()),
             EntryDecision::Skip(SkipReason::OpenPositionExists)
         ));
     }

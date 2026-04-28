@@ -168,7 +168,7 @@ async function renderTrades() {
       const reason = r.exitReason || (r.status === 'OPEN' ? 'OPEN' : '—');
       // Strategy lives inside entryGateSnapshot JSON ("strategy" field).
       // Older rows (pre-tag) will show CHEAP by default.
-      let strategy = 'CHEAP';
+      let strategy = 'FAVORITE';
       const snap = r.entryGateSnapshot || r.entry_gate_snapshot;
       if (snap) {
         try {

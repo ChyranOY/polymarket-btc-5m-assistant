@@ -485,3 +485,16 @@ tr:last-child td { border-bottom: none; }
   color: #ffb347;
   font-weight: 700;
 }
+
+/* Favorite strategy chip — current active path. */
+.strategy-favorite {
+  color: #79d4ff;
+  letter-spacing: 0.08em;
+  font-size: 0.85em;
+  font-weight: 700;
+}
+.strategy-chip.strategy-favorite {
+  background: rgba(121, 212, 255, 0.15);
+  color: #79d4ff;
+  font-weight: 700;
+}
