@@ -120,8 +120,8 @@ pub struct AppConfig {
 impl AppConfig {
     pub fn from_env() -> Result<Self> {
         let polymarket = PolymarketConfig {
-            series_slug: env_or("POLYMARKET_SERIES_SLUG", "btc-up-or-down-5m".to_string())?,
-            series_id: env_opt("POLYMARKET_SERIES_ID").or(Some("10684".to_string())),
+            series_slug: env_or("POLYMARKET_SERIES_SLUG", "btc-up-or-down-15m".to_string())?,
+            series_id: env_opt("POLYMARKET_SERIES_ID").or(Some("10192".to_string())),
             gamma_url: env_or(
                 "POLYMARKET_GAMMA_URL",
                 "https://gamma-api.polymarket.com".to_string(),
@@ -167,13 +167,13 @@ impl AppConfig {
             cheap_side_min: env_dec("CHEAP_SIDE_MIN", "0.15")?,
             cheap_side_max: env_dec("CHEAP_SIDE_MAX", "0.45")?,
             max_entry_spread: env_dec("MAX_ENTRY_SPREAD", "0.04")?,
-            time_left_min_minutes: env_or("TIME_LEFT_MIN_MINUTES", 1.5f64)?,
+            time_left_min_minutes: env_or("TIME_LEFT_MIN_MINUTES", 4.5f64)?,
             trading_hours_start_pst: env_or("TRADING_HOURS_START_PST", 6u32)?,
             trading_hours_end_pst: env_or("TRADING_HOURS_END_PST", 17u32)?,
             allow_weekends: env_or("ALLOW_WEEKENDS", false)?,
             paper_fee_rate: env_dec("PAPER_FEE_RATE", "0.02")?,
-            cooldown_after_exit_sec: env_or("COOLDOWN_AFTER_EXIT_SEC", 300u32)?, // 5 min
-            warmup_ticks: env_or("WARMUP_SECS", 30u32)?,
+            cooldown_after_exit_sec: env_or("COOLDOWN_AFTER_EXIT_SEC", 900u32)?, // 15 min
+            warmup_ticks: env_or("WARMUP_SECS", 90u32)?,
             kelly: KellyConfig {
                 enabled: env_or("KELLY_ENABLED", false)?,
                 estimated_prob: env_dec("ESTIMATED_PROB", "0.50")?,

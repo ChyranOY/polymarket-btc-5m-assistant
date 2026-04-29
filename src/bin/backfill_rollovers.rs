@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
     // Backfill both modes — the bug affects every rollover regardless of paper/live.
     for mode in [Mode::Paper, Mode::Live] {
         let rows = supabase
-            .fetch_rollover_trades(mode, "btc-updown-5m-")
+            .fetch_rollover_trades(mode, "btc-updown-15m-")
             .await
             .with_context(|| format!("fetch rollover trades for {}", mode.as_str()))?;
         tracing::info!(mode = mode.as_str(), count = rows.len(), "scanning");

@@ -28,7 +28,7 @@ use std::collections::HashMap;
 use std::env;
 use std::str::FromStr;
 
-const DEFAULT_SLUG_PREFIX: &str = "btc-updown-5m";
+const DEFAULT_SLUG_PREFIX: &str = "btc-updown-15m";
 const DEFAULT_LIMIT: usize = 2000;
 const DEFAULT_TICK_LIMIT: usize = 500_000;
 const DEFAULT_TOP: usize = 20;

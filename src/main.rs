@@ -74,7 +74,7 @@ async fn main() -> Result<()> {
     let mut state0 = engine::state::EngineState::default();
     state0.trading_enabled = cfg.trading.enabled_on_boot;
     state0.balance = cfg.trading.starting_balance;
-    let slug_prefix = "btc-updown-5m-";
+    let slug_prefix = "btc-updown-15m-";
     boot_reconcile(&mut state0, &supabase, cfg.trading.mode, slug_prefix).await;
     let state = Arc::new(Mutex::new(state0));
 

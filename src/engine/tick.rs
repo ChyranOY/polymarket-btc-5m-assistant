@@ -214,7 +214,7 @@ pub async fn run_one(h: &EngineHandle) -> Result<()> {
             "position": position_meta,
         });
         recorder.record(json!({
-            "timeframe": "5m",
+            "timeframe": "15m",
             "market_slug": snapshot.market_slug,
             "time_left_min": snapshot.time_left_minutes(now),
             "poly_up": snapshot.up_price,

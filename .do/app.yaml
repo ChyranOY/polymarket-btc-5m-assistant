@@ -42,10 +42,10 @@ services:
         value: "false"
         scope: RUN_TIME
       - key: POLYMARKET_SERIES_ID
-        value: "10684"
+        value: "10192"
         scope: RUN_TIME
       - key: POLYMARKET_SERIES_SLUG
-        value: btc-up-or-down-5m
+        value: btc-up-or-down-15m
         scope: RUN_TIME
       - key: RUST_LOG
         value: "info,polymarket_btc_5m=debug"
